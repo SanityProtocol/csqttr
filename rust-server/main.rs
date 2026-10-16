@@ -1447,6 +1447,16 @@ struct SwgAppRouting {
 
 const SWG_RULE_ID: &str = "swg";
 
+// A per-password rule's id: "swg-" + 16 hex of SHA-256 over the rule's content, so passwords asking for the same rule share
+// one row, and an unchanged rule keeps its id across reconciles (no churn in the store).
+fn swgpanel_rule_id(rule: &model::RoutingRule) -> String {
+    use sha2::{Digest, Sha256};
+    let mut keyed = rule.clone();
+    keyed.id.clear();
+    let digest = Sha256::digest(serde_json::to_vec(&keyed).unwrap_or_default());
+    format!("swg-{}", hex::encode(&digest[..8]))
+}
+
 // The rule the panel's App routing asks for, or None when it asks for nothing (no rule is sent at all then).
 fn swgpanel_app_rule(r: &SwgAppRouting) -> Option<model::RoutingRule> {
     let only_apps = r.apps_mode == "only";
@@ -1483,6 +1493,10 @@ struct SwgDesiredPw {
     name: String,
     #[serde(default)]
     is_deactivated: bool,
+    // This password's own App routing, overriding the server's: absent → the server's rule; present → its own rule, and
+    // one with everything at its default means NO rule for it, whatever the server's says.
+    #[serde(default)]
+    app_routing: Option<SwgAppRouting>,
 }
 
 // Watch desired.json and reconcile on start, on SIGHUP, and on mtime change (3s poll). desired.json is the
@@ -1516,6 +1530,51 @@ async fn swgpanel_desired_loop(app: Arc<App>, path: std::path::PathBuf) {
             }
         }
     }
+}
+
+// App routing onto the store: the server's rule ("swg") for every password, unless a password carries its own (a rule shared by
+// content, "swg-<hash>"), or its own empty one (no rule). Every "swg*" rule no password uses any more is dropped. Returns
+// whether the store changed.
+fn swgpanel_apply_routing(db: &mut model::Database, desired: &SwgDesiredFile, main_pw: &str) -> bool {
+    let mut changed = false;
+    let server_rule = desired.app_routing.as_ref().and_then(swgpanel_app_rule);
+    let mut wanted: std::collections::BTreeMap<String, model::RoutingRule> = std::collections::BTreeMap::new();
+    for d in desired.passwords.iter().filter(|p| !p.password.is_empty() && p.password != main_pw) {
+        let rule = match &d.app_routing {
+            Some(own) => swgpanel_app_rule(own).map(|mut r| {
+                r.id = swgpanel_rule_id(&r);
+                r
+            }),
+            None => server_rule.clone(),
+        };
+        let id = rule.as_ref().map(|r| r.id.clone()).unwrap_or_default();
+        if let Some(r) = rule {
+            wanted.insert(r.id.clone(), r);
+        }
+        if let Some(entry) = db.passwords.get_mut(&d.password)
+            && entry.routing_rule_id != id
+        {
+            entry.routing_rule_id = id;
+            changed = true;
+        }
+    }
+    let stale: Vec<String> = db
+        .routing_rules
+        .keys()
+        .filter(|k| (k.as_str() == SWG_RULE_ID || k.starts_with("swg-")) && !wanted.contains_key(*k))
+        .cloned()
+        .collect();
+    for k in stale {
+        db.routing_rules.remove(&k);
+        changed = true;
+    }
+    for (id, rule) in wanted {
+        if db.routing_rules.get(&id) != Some(&rule) {
+            db.routing_rules.insert(id, rule);
+            changed = true;
+        }
+    }
+    changed
 }
 
 async fn swgpanel_reconcile_desired(app: &Arc<App>, path: &std::path::Path) {
@@ -1600,34 +1659,7 @@ async fn swgpanel_reconcile_desired(app: &Arc<App>, path: &std::path::Path) {
                 }
             }
         }
-        // App routing: one rule ("swg") for every password of this server, or none.
-        match desired.app_routing.as_ref().and_then(swgpanel_app_rule) {
-            Some(rule) => {
-                if db.routing_rules.get(SWG_RULE_ID) != Some(&rule) {
-                    db.routing_rules.insert(SWG_RULE_ID.to_owned(), rule);
-                    changed = true;
-                }
-                for d in desired.passwords.iter().filter(|p| !p.password.is_empty() && p.password != main_pw) {
-                    if let Some(entry) = db.passwords.get_mut(&d.password)
-                        && entry.routing_rule_id != SWG_RULE_ID
-                    {
-                        entry.routing_rule_id = SWG_RULE_ID.to_owned();
-                        changed = true;
-                    }
-                }
-            }
-            None => {
-                if db.routing_rules.remove(SWG_RULE_ID).is_some() {
-                    changed = true;
-                }
-                for entry in db.passwords.values_mut() {
-                    if entry.routing_rule_id == SWG_RULE_ID {
-                        entry.routing_rule_id.clear();
-                        changed = true;
-                    }
-                }
-            }
-        }
+        changed |= swgpanel_apply_routing(&mut db, &desired, &main_pw);
         if changed {
             app.db_persistence.submit(db.clone());
         }
@@ -2074,5 +2106,54 @@ mod swg_app_routing_tests {
         assert!(a.packages.is_empty() && !a.is_whitelist);
         // the built-in list alone is a rule
         assert!(swgpanel_app_rule(&r("all", &[], "direct", &[], true, "direct", &[])).unwrap().template_domains);
+    }
+
+    fn pw(p: &str, own: Option<SwgAppRouting>) -> SwgDesiredPw {
+        SwgDesiredPw { password: p.into(), expires_at: 0, vk_hash: String::new(), name: String::new(), is_deactivated: false, app_routing: own }
+    }
+
+    fn db_with(pws: &[&str]) -> model::Database {
+        let mut db = model::Database { main_password: "owner".into(), ..Default::default() };
+        for p in pws {
+            db.passwords.insert((*p).into(), model::PasswordEntry::default());
+        }
+        db
+    }
+
+    #[test]
+    fn per_password_overrides_the_server_rule() {
+        let mut db = db_with(&["a", "b", "c", "d"]);
+        let tg = r("except", &["org.telegram.messenger"], "direct", &[], false, "direct", &[]);
+        let desired = SwgDesiredFile {
+            app_routing: Some(r("all", &[], "direct", &["ya.ru"], false, "direct", &[])),
+            passwords: vec![pw("a", None), pw("b", Some(tg.clone())), pw("c", Some(tg)), pw("d", Some(SwgAppRouting::default()))],
+        };
+        assert!(swgpanel_apply_routing(&mut db, &desired, "owner"));
+        let id = |p: &str| db.passwords[p].routing_rule_id.clone();
+        assert_eq!(id("a"), SWG_RULE_ID, "no override: the server's rule");
+        assert!(id("b").starts_with("swg-") && id("b") == id("c"), "the same override shares one rule");
+        assert_eq!(id("d"), "", "an empty override: no rule at all");
+        assert_eq!(db.routing_rules.len(), 2);
+        assert_eq!(db.routing_rules[&id("b")].packages, vec!["org.telegram.messenger"]);
+        // the same desired again changes nothing (stable ids, no churn)
+        assert!(!swgpanel_apply_routing(&mut db, &desired, "owner"));
+        // the server rule and the overrides gone: every swg rule dropped, every password cleared
+        let bare = SwgDesiredFile { app_routing: None, passwords: vec![pw("a", None), pw("b", None), pw("c", None), pw("d", None)] };
+        assert!(swgpanel_apply_routing(&mut db, &bare, "owner"));
+        assert!(db.routing_rules.is_empty());
+        assert!(db.passwords.values().all(|e| e.routing_rule_id.is_empty()));
+    }
+
+    #[test]
+    fn a_rule_nobody_uses_any_more_is_dropped_and_others_are_kept() {
+        let mut db = db_with(&["a"]);
+        db.routing_rules.insert("user-made".into(), model::RoutingRule { id: "user-made".into(), ..Default::default() });
+        let one = SwgDesiredFile { app_routing: None, passwords: vec![pw("a", Some(r("only", &["com.x"], "direct", &[], false, "direct", &[])))] };
+        swgpanel_apply_routing(&mut db, &one, "owner");
+        let first = db.passwords["a"].routing_rule_id.clone();
+        let two = SwgDesiredFile { app_routing: None, passwords: vec![pw("a", Some(r("only", &["com.y"], "direct", &[], false, "direct", &[])))] };
+        swgpanel_apply_routing(&mut db, &two, "owner");
+        assert!(!db.routing_rules.contains_key(&first), "the old override's rule is gone");
+        assert!(db.routing_rules.contains_key("user-made"), "a rule the panel did not make is never touched");
     }
 }
