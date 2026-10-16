@@ -120,3 +120,37 @@ pub fn build(
     cfg.desired_path = desired;
     Ok(cfg)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_flags_is_stock() {
+        let cfg = build(None, None, false, false, None).unwrap();
+        assert_eq!(cfg.iface, "csqtt1");
+        assert_eq!(cfg.gw_addr, "10.66.67.1");
+        assert_eq!(cfg.subnet_prefix, [10, 66, 67]);
+        assert_eq!(cfg.subnet_cidr, "10.66.67.0/24");
+        assert!(!cfg.no_nat && !cfg.headless && cfg.desired_path.is_none());
+    }
+
+    #[test]
+    fn tun_addr_sets_the_whole_subnet() {
+        let cfg = build(Some("csqtt7".into()), Some("10.66.71.1/24".into()), true, true, None).unwrap();
+        assert_eq!(cfg.iface, "csqtt7");
+        assert_eq!(cfg.gw_addr, "10.66.71.1");
+        assert_eq!(cfg.subnet_prefix, [10, 66, 71]);
+        assert_eq!(cfg.subnet_cidr, "10.66.71.0/24");
+        assert!(cfg.no_nat && cfg.headless);
+        // a bare address means /24
+        assert_eq!(build(None, Some("10.9.8.1".into()), false, false, None).unwrap().subnet_prefix, [10, 9, 8]);
+    }
+
+    #[test]
+    fn only_a_24_is_accepted() {
+        assert!(build(None, Some("10.66.71.1/16".into()), false, false, None).is_err());
+        assert!(build(None, Some("10.66.71/24".into()), false, false, None).is_err());
+        assert!(build(None, Some("10.66.300.1/24".into()), false, false, None).is_err());
+    }
+}
