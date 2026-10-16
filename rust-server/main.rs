@@ -1420,6 +1420,56 @@ async fn async_main() -> Result<()> {
 struct SwgDesiredFile {
     #[serde(default)]
     passwords: Vec<SwgDesiredPw>,
+    // One routing rule for every password of this server (the panel's App routing). Absent → no rule.
+    #[serde(default)]
+    app_routing: Option<SwgAppRouting>,
+}
+
+// The panel's App routing, in its own words; mapped onto csqtt's RoutingRule by swgpanel_app_rule. The panel validates it
+// (a "tunnel"/"only" mode always carries a list) — upstream validates nothing.
+#[derive(serde::Deserialize, Default, Clone)]
+struct SwgAppRouting {
+    #[serde(default)]
+    apps_mode: String, // "all" | "except" | "only"
+    #[serde(default)]
+    packages: Vec<String>,
+    #[serde(default)]
+    domains_mode: String, // "direct" (blacklist: the listed bypass the tunnel) | "tunnel" (whitelist: only the listed use it)
+    #[serde(default)]
+    domains: Vec<String>,
+    #[serde(default)]
+    template_domains: bool,
+    #[serde(default)]
+    ips_mode: String, // "direct" | "tunnel"
+    #[serde(default)]
+    ips: Vec<String>,
+}
+
+const SWG_RULE_ID: &str = "swg";
+
+// The rule the panel's App routing asks for, or None when it asks for nothing (no rule is sent at all then).
+fn swgpanel_app_rule(r: &SwgAppRouting) -> Option<model::RoutingRule> {
+    let only_apps = r.apps_mode == "only";
+    let packages = if r.apps_mode == "except" || only_apps { r.packages.clone() } else { Vec::new() };
+    let domains_whitelist = r.domains_mode == "tunnel";
+    let template = r.template_domains && !domains_whitelist; // the built-in list is a direct list
+    let ips_whitelist = r.ips_mode == "tunnel";
+    if packages.is_empty() && !only_apps && r.domains.is_empty() && !template && !domains_whitelist
+        && r.ips.is_empty() && !ips_whitelist
+    {
+        return None;
+    }
+    Some(model::RoutingRule {
+        id: SWG_RULE_ID.to_owned(),
+        name: "swg-panel".to_owned(),
+        is_whitelist: only_apps,
+        packages,
+        template_domains: template,
+        direct_domains: r.domains.clone(),
+        domains_is_whitelist: domains_whitelist,
+        ip_is_whitelist: ips_whitelist,
+        ips: r.ips.clone(),
+    })
 }
 
 #[derive(serde::Deserialize)]
@@ -1547,6 +1597,34 @@ async fn swgpanel_reconcile_desired(app: &Arc<App>, path: &std::path::Path) {
                         },
                     );
                     changed = true;
+                }
+            }
+        }
+        // App routing: one rule ("swg") for every password of this server, or none.
+        match desired.app_routing.as_ref().and_then(swgpanel_app_rule) {
+            Some(rule) => {
+                if db.routing_rules.get(SWG_RULE_ID) != Some(&rule) {
+                    db.routing_rules.insert(SWG_RULE_ID.to_owned(), rule);
+                    changed = true;
+                }
+                for d in desired.passwords.iter().filter(|p| !p.password.is_empty() && p.password != main_pw) {
+                    if let Some(entry) = db.passwords.get_mut(&d.password)
+                        && entry.routing_rule_id != SWG_RULE_ID
+                    {
+                        entry.routing_rule_id = SWG_RULE_ID.to_owned();
+                        changed = true;
+                    }
+                }
+            }
+            None => {
+                if db.routing_rules.remove(SWG_RULE_ID).is_some() {
+                    changed = true;
+                }
+                for entry in db.passwords.values_mut() {
+                    if entry.routing_rule_id == SWG_RULE_ID {
+                        entry.routing_rule_id.clear();
+                        changed = true;
+                    }
                 }
             }
         }
@@ -1962,5 +2040,39 @@ mod lock_tests {
             cores: 4,
         };
         assert_eq!(cpu_percentage(previous, current), Some(80));
+    }
+}
+
+#[cfg(test)]
+mod swg_app_routing_tests {
+    use super::*;
+
+    fn r(apps: &str, pk: &[&str], dm: &str, d: &[&str], tpl: bool, im: &str, ips: &[&str]) -> SwgAppRouting {
+        let v = |x: &[&str]| x.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        SwgAppRouting { apps_mode: apps.into(), packages: v(pk), domains_mode: dm.into(), domains: v(d),
+                        template_domains: tpl, ips_mode: im.into(), ips: v(ips) }
+    }
+
+    #[test]
+    fn nothing_asked_is_no_rule() {
+        assert!(swgpanel_app_rule(&r("all", &["com.x"], "direct", &[], false, "direct", &[])).is_none());
+        assert!(swgpanel_app_rule(&SwgAppRouting::default()).is_none());
+    }
+
+    #[test]
+    fn each_mode_maps_onto_the_rule() {
+        let x = swgpanel_app_rule(&r("except", &["org.telegram.messenger"], "direct", &["ya.ru"], true, "direct", &["10.0.0.0/8"])).unwrap();
+        assert_eq!(x.id, SWG_RULE_ID);
+        assert!(!x.is_whitelist && x.packages == vec!["org.telegram.messenger"]);
+        assert!(!x.domains_is_whitelist && x.direct_domains == vec!["ya.ru"] && x.template_domains);
+        assert!(!x.ip_is_whitelist && x.ips == vec!["10.0.0.0/8"]);
+        let o = swgpanel_app_rule(&r("only", &["com.a"], "tunnel", &["b.com"], true, "tunnel", &["1.1.1.1"])).unwrap();
+        assert!(o.is_whitelist && o.domains_is_whitelist && o.ip_is_whitelist);
+        assert!(!o.template_domains, "the built-in list is a direct list: dropped in tunnel mode");
+        // "all" never carries packages, whatever the list says
+        let a = swgpanel_app_rule(&r("all", &["com.a"], "direct", &["c.com"], false, "direct", &[])).unwrap();
+        assert!(a.packages.is_empty() && !a.is_whitelist);
+        // the built-in list alone is a rule
+        assert!(swgpanel_app_rule(&r("all", &[], "direct", &[], true, "direct", &[])).unwrap().template_domains);
     }
 }
