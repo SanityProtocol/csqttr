@@ -1198,7 +1198,7 @@ impl FirewallRule {
 }
 
 fn purge_legacy_mss_clamp() {
-    let subnet = crate::tun_device::TUN_SUBNET;
+    let subnet = crate::swgpanel::subnet_cidr();
     let mss_source = [
         "-s",
         subnet,
@@ -1245,7 +1245,7 @@ fn purge_legacy_mss_clamp() {
 }
 
 fn managed_firewall_rules(tun_iface: &str) -> Vec<FirewallRule> {
-    let subnet = crate::tun_device::TUN_SUBNET;
+    let subnet = crate::swgpanel::subnet_cidr();
     vec![
         FirewallRule::new(
             "iptables",
@@ -1291,6 +1291,17 @@ struct KernelNetworking {
 
 impl KernelNetworking {
     fn install(tun_iface: &str) -> Self {
+        // swg-panel: under --no-nat the node owns forwarding, NAT and the firewall, and the host's sysctls are not
+        // ours to change (2.5 sets ip_forward, rp_filter, fq/bbr and six TCP knobs host-wide, adds FORWARD ACCEPT +
+        // MASQUERADE, and deletes TCPMSS rules on the subnet). Only the reverse-path filter of the TUN this process
+        // creates stays, which is scoped to that interface.
+        if crate::swgpanel::no_nat() {
+            set_kernel_parameter(
+                &format!("/proc/sys/net/ipv4/conf/{tun_iface}/rp_filter"),
+                "2",
+            );
+            return Self { rules: Vec::new() };
+        }
         let _ = std::process::Command::new("modprobe")
             .arg("tcp_bbr")
             .output();

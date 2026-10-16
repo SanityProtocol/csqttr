@@ -719,14 +719,19 @@ pub fn is_expired(entry: &PasswordEntry) -> bool {
     entry.expires_at != 0 && now() > entry.expires_at
 }
 
-pub const OWNER_TUNNEL_IP: &str = "10.66.67.2";
+// swg-panel: .2 of the instance's --tun-addr /24 (stock: 10.66.67.2).
+pub fn owner_tunnel_ip() -> String {
+    crate::swgpanel::subnet_addr(2)
+}
 
 pub fn get_next_ip(db: &Database) -> Option<String> {
     let mut buf = String::with_capacity(16);
     for i in 3..=250u8 {
         buf.clear();
         use std::fmt::Write;
-        let _ = write!(buf, "10.66.67.{i}");
+        // swg-panel: pool base follows the instance's --tun-addr /24 (stock: 10.66.67).
+        let p = crate::swgpanel::subnet_prefix();
+        let _ = write!(buf, "{}.{}.{}.{i}", p[0], p[1], p[2]);
         let is_used = db.passwords.values().any(|d| d.ip == buf);
         if !is_used {
             return Some(buf);
@@ -737,7 +742,7 @@ pub fn get_next_ip(db: &Database) -> Option<String> {
 
 pub fn resolve_session_ip(db: &Database, session_password: &str) -> Option<String> {
     if secret_eq(session_password, &db.main_password) {
-        return Some(OWNER_TUNNEL_IP.to_owned());
+        return Some(owner_tunnel_ip());
     }
     db.passwords.get(session_password).and_then(|entry| {
         if !entry.ip.is_empty() {

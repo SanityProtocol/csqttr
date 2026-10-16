@@ -29,6 +29,7 @@ mod packet;
 mod path_probe;
 mod protocol;
 mod proxy_route;
+mod swgpanel;
 mod tokio_io;
 mod tproxy;
 mod tun_device;
@@ -158,6 +159,37 @@ struct Args {
         help = "Число последних DPI-записей"
     )]
     samples: usize,
+
+    // ── swg-panel integration flags (all optional; absent → stock csqtt behaviour) ──
+    #[arg(long, help = "swg-panel: TUN interface name for multi-instance (stock: csqtt1)")]
+    iface: Option<String>,
+    #[arg(
+        long = "tun-addr",
+        help = "swg-panel: TUN gateway CIDR /24, e.g. 10.66.68.1/24 (stock: 10.66.67.1/24)"
+    )]
+    tun_addr: Option<String>,
+    #[arg(
+        long = "no-nat",
+        default_value_t = false,
+        help = "swg-panel: the node owns forwarding, NAT and the firewall — set no host sysctls and install no FORWARD/MASQUERADE rules"
+    )]
+    no_nat: bool,
+    #[arg(
+        long = "no-web",
+        default_value_t = false,
+        help = "swg-panel: run headless — no web admin panel (it binds 0.0.0.0), no TLS cert, and no DPI/syscalls monitor sockets; the panel owns all state via --desired"
+    )]
+    headless: bool,
+    #[arg(
+        long,
+        help = "swg-panel: declarative desired-passwords JSON, panel-owned (SIGHUP/mtime reload, no restart)"
+    )]
+    desired: Option<std::path::PathBuf>,
+    #[arg(
+        long = "max-passwords",
+        help = "swg-panel: accepted but inert since 2.5 (no password cap; the address pool bounds it); kept so installed units keep starting"
+    )]
+    max_passwords: Option<usize>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -1006,6 +1038,16 @@ async fn async_main() -> Result<()> {
         bail!("csqtt-server must run as root");
     }
 
+    // swg-panel: lock in the per-instance config (iface/subnet/desired) before anything reads it.
+    let _ = args.max_passwords;
+    swgpanel::init(swgpanel::build(
+        args.iface.clone(),
+        args.tun_addr.clone(),
+        args.no_nat,
+        args.headless,
+        args.desired.clone(),
+    )?);
+
     if args.tproxy_child {
         let tproxy_status = args.tproxy_status.clone();
         return match run_tproxy_child(args.tproxy_port, args.tproxy_status).await {
@@ -1198,77 +1240,101 @@ async fn async_main() -> Result<()> {
     );
 
     let web_app = app.clone();
-    let diagnostic_app = app.clone();
 
-    tokio::spawn(async move {
-        if let Err(e) = protocol::run_dpi_server().await {
-            eprintln!("[DPI] Server listener error: {e}");
-        }
-    });
+    // swg-panel: the DPI (46003) + syscalls (46004) sockets only serve csqtt's own `dpi`/`syscalls` monitor
+    // CLIs, which we never use; their fixed loopback ports also collide on a multi-instance node.
+    if !swgpanel::headless() {
+        let diagnostic_app = app.clone();
+        tokio::spawn(async move {
+            if let Err(e) = protocol::run_dpi_server().await {
+                eprintln!("[DPI] Server listener error: {e}");
+            }
+        });
 
-    tokio::spawn(async move {
-        if let Err(e) = protocol::run_syscalls_server(diagnostic_app).await {
-            eprintln!("[SYSCALLS] Server listener error: {e}");
-        }
-    });
+        tokio::spawn(async move {
+            if let Err(e) = protocol::run_syscalls_server(diagnostic_app).await {
+                eprintln!("[SYSCALLS] Server listener error: {e}");
+            }
+        });
+    }
 
     tokio::spawn(auto_restart_loop(app.clone(), auto_restart_interval_rx));
 
-    let cert_path = app.config_dir.join("web_cert.pem");
-    let key_path = app.config_dir.join("web_key.pem");
-    if !cert_path.exists() && !key_path.exists() {
-        let mut subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
-        if let Ok(hostname) = std::fs::read_to_string("/etc/hostname") {
-            let hostname = hostname.trim().to_string();
-            if !hostname.is_empty() {
-                subject_alt_names.push(hostname);
+    // swg-panel: headless (--no-web) runs no web admin panel, so skip its self-signed cert generation,
+    // the TLS config it loads and the reload loop that watches it — all three exist only to serve that
+    // panel, which binds 0.0.0.0 and is redundant where the swg-panel owns state via --desired.
+    let tls_config = if swgpanel::headless() {
+        None
+    } else {
+        let cert_path = app.config_dir.join("web_cert.pem");
+        let key_path = app.config_dir.join("web_key.pem");
+        if !cert_path.exists() && !key_path.exists() {
+            let mut subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
+            if let Ok(hostname) = std::fs::read_to_string("/etc/hostname") {
+                let hostname = hostname.trim().to_string();
+                if !hostname.is_empty() {
+                    subject_alt_names.push(hostname);
+                }
             }
-        }
-        if let Ok(probe) = std::net::UdpSocket::bind("0.0.0.0:0") {
-            let _ = probe.set_nonblocking(true);
-            if probe.connect("8.8.8.8:53").is_ok()
-                && let Ok(addr) = probe.local_addr()
-                && !addr.ip().is_loopback()
-            {
-                subject_alt_names.push(addr.ip().to_string());
+            if let Ok(probe) = std::net::UdpSocket::bind("0.0.0.0:0") {
+                let _ = probe.set_nonblocking(true);
+                if probe.connect("8.8.8.8:53").is_ok()
+                    && let Ok(addr) = probe.local_addr()
+                    && !addr.ip().is_loopback()
+                {
+                    subject_alt_names.push(addr.ip().to_string());
+                }
             }
-        }
-        if let Ok(cert) = rcgen::generate_simple_self_signed(subject_alt_names) {
-            let cert_pem = cert.cert.pem();
-            let key_pem = cert.key_pair.serialize_pem();
-            let _ = tokio::fs::write(&cert_path, cert_pem).await;
-            let _ = tokio::fs::write(&key_path, key_pem).await;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ =
-                    tokio::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))
-                        .await;
+            if let Ok(cert) = rcgen::generate_simple_self_signed(subject_alt_names) {
+                let cert_pem = cert.cert.pem();
+                let key_pem = cert.key_pair.serialize_pem();
+                let _ = tokio::fs::write(&cert_path, cert_pem).await;
+                let _ = tokio::fs::write(&key_path, key_pem).await;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ =
+                        tokio::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))
+                            .await;
+                }
             }
+        } else if !cert_path.exists() || !key_path.exists() {
+            anyhow::bail!(
+                "incomplete WEB TLS certificate pair in {}; restore both web_cert.pem and web_key.pem",
+                app.config_dir.display()
+            );
         }
-    } else if !cert_path.exists() || !key_path.exists() {
-        anyhow::bail!(
-            "incomplete WEB TLS certificate pair in {}; restore both web_cert.pem and web_key.pem",
-            app.config_dir.display()
-        );
-    }
 
-    let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path)
-        .await
-        .context("load web cert")?;
+        let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path)
+            .await
+            .context("load web cert")?;
 
-    #[cfg(unix)]
-    tokio::spawn(web_tls_reload_loop(
-        tls_config.clone(),
-        cert_path.clone(),
-        key_path.clone(),
-    ));
+        #[cfg(unix)]
+        tokio::spawn(web_tls_reload_loop(
+            tls_config.clone(),
+            cert_path.clone(),
+            key_path.clone(),
+        ));
+
+        Some(tls_config)
+    };
 
     let protocol_runtime = protocol::start(app.clone()).await?;
     let mut protocol_status = protocol_runtime.status_receiver();
-    let mut web_task = tokio::spawn(async move { web_panel::run(web_app, tls_config).await });
+    let mut web_task = match tls_config {
+        // swg-panel: a never-completing task fills the web_task slot under --no-web so the select! below
+        // keeps its shape — its "web server stopped" arm simply never fires.
+        None => tokio::spawn(async { std::future::pending::<anyhow::Result<()>>().await }),
+        Some(tls_config) => tokio::spawn(async move { web_panel::run(web_app, tls_config).await }),
+    };
     tokio::spawn(protocol::session_janitor(app.clone()));
-    tokio::spawn(protocol::password_janitor(app.clone()));
+    // swg-panel: under --desired the panel owns expiry (it rewrites desired.json), so csqtt's own expiry
+    // janitor is disabled to avoid two writers pruning the same set. Without --desired it runs as stock.
+    if let Some(desired) = swgpanel::desired_path().cloned() {
+        tokio::spawn(swgpanel_desired_loop(app.clone(), desired));
+    } else {
+        tokio::spawn(protocol::password_janitor(app.clone()));
+    }
     tokio::spawn(password_epoch_sweeper(app.clone()));
 
     tokio::spawn(cpu_loop(app.clone()));
@@ -1346,6 +1412,158 @@ async fn async_main() -> Result<()> {
     match terminal_error {
         Some(error) => Err(error),
         None => Ok(()),
+    }
+}
+
+// ── swg-panel: declarative desired-passwords reconcile (panel owns the set; csqtt owns address/traffic) ──
+#[derive(serde::Deserialize, Default)]
+struct SwgDesiredFile {
+    #[serde(default)]
+    passwords: Vec<SwgDesiredPw>,
+}
+
+#[derive(serde::Deserialize)]
+struct SwgDesiredPw {
+    password: String,
+    #[serde(default)]
+    expires_at: i64,
+    #[serde(default)]
+    vk_hash: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    is_deactivated: bool,
+}
+
+// Watch desired.json and reconcile on start, on SIGHUP, and on mtime change (3s poll). desired.json is the
+// panel's INPUT (sole writer); the csqtt.db store is csqtt's OUTPUT (sole writer) → no write race.
+async fn swgpanel_desired_loop(app: Arc<App>, path: std::path::PathBuf) {
+    swgpanel_reconcile_desired(&app, &path).await;
+    let mut last = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+    let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()).ok();
+    let mut ticker = tokio::time::interval(Duration::from_secs(3));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        let hup = async {
+            match sighup.as_mut() {
+                Some(s) => {
+                    s.recv().await;
+                }
+                None => std::future::pending::<()>().await,
+            }
+        };
+        tokio::select! {
+            _ = ticker.tick() => {
+                let m = std::fs::metadata(&path).and_then(|md| md.modified()).ok();
+                if m != last {
+                    last = m;
+                    swgpanel_reconcile_desired(&app, &path).await;
+                }
+            }
+            _ = hup => {
+                swgpanel_reconcile_desired(&app, &path).await;
+                last = std::fs::metadata(&path).and_then(|md| md.modified()).ok();
+            }
+        }
+    }
+}
+
+async fn swgpanel_reconcile_desired(app: &Arc<App>, path: &std::path::Path) {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(_) => return, // absent/unreadable → never wipe live passwords on a transient read error
+    };
+    let desired: SwgDesiredFile = match serde_json::from_str(&text) {
+        Ok(d) => d,
+        Err(error) => {
+            eprintln!("[DESIRED] parse {}: {error}", path.display());
+            return;
+        }
+    };
+    let want: std::collections::HashMap<&str, &SwgDesiredPw> = desired
+        .passwords
+        .iter()
+        .filter(|p| !p.password.is_empty())
+        .map(|p| (p.password.as_str(), p))
+        .collect();
+    // Passwords whose live sessions must end: removed, or just deactivated — what the stock web panel's
+    // client_delete / client_toggle do. A session of a password that stays usable is never touched.
+    let mut cut: Vec<String> = Vec::new();
+    let mut removed: Vec<String> = Vec::new();
+    let mut changed = false;
+    {
+        let mut db = app.db.write().await;
+        let main_pw = db.main_password.clone();
+        removed.extend(
+            db.passwords
+                .keys()
+                .filter(|k| **k != main_pw && !want.contains_key(k.as_str()))
+                .cloned(),
+        );
+        for k in &removed {
+            db.passwords.remove(k);
+            changed = true;
+        }
+        // add new / update the panel-owned fields (never ip / up_bytes / down_bytes — csqtt owns those). In file
+        // order, so new passwords take addresses in the order the panel lists them.
+        for d in desired.passwords.iter().filter(|p| !p.password.is_empty()) {
+            let pw = &d.password.as_str();
+            if *pw == main_pw {
+                continue;
+            }
+            match db.passwords.get_mut(*pw) {
+                Some(entry) => {
+                    if entry.expires_at != d.expires_at
+                        || entry.vk_hash != d.vk_hash
+                        || entry.vk_hashes != d.vk_hash
+                        || entry.name != d.name
+                        || entry.is_deactivated != d.is_deactivated
+                    {
+                        if d.is_deactivated && !entry.is_deactivated {
+                            cut.push((*pw).to_owned());
+                        }
+                        entry.expires_at = d.expires_at;
+                        entry.vk_hash = d.vk_hash.clone();
+                        entry.vk_hashes = d.vk_hash.clone();
+                        entry.name = d.name.clone();
+                        entry.is_deactivated = d.is_deactivated;
+                        changed = true;
+                    }
+                }
+                None => {
+                    // as the stock web panel's client_create: the address and the subscription id are given here
+                    let ip = model::get_next_ip(&db).unwrap_or_default();
+                    db.passwords.insert(
+                        (*pw).to_owned(),
+                        model::PasswordEntry {
+                            ip,
+                            expires_at: d.expires_at,
+                            vk_hash: d.vk_hash.clone(),
+                            vk_hashes: d.vk_hash.clone(),
+                            name: d.name.clone(),
+                            is_deactivated: d.is_deactivated,
+                            sub_uuid: model::random_uuid_v4(),
+                            ..Default::default()
+                        },
+                    );
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            app.db_persistence.submit(db.clone());
+        }
+    }
+    for pw in &removed {
+        app.derived_keys.remove(pw);
+    }
+    for pw in removed.iter().chain(&cut) {
+        protocol::drop_password_sessions(app, pw);
+    }
+    if changed
+        && let Err(error) = protocol::refresh_credentials(app).await
+    {
+        eprintln!("[DESIRED] refresh credentials: {error:#}");
     }
 }
 

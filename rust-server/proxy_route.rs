@@ -502,7 +502,9 @@ async fn activate_tproxy(runtime_id: u64, port: u16) -> Result<()> {
     let _ = command_output("sysctl", &["-w", "net.ipv4.ip_forward=1"]).await;
     let _ = command_output("sysctl", &["-w", "net.ipv4.conf.all.rp_filter=2"]).await;
     let _ = command_output("sysctl", &["-w", "net.ipv4.conf.default.rp_filter=2"]).await;
-    let _ = command_output("sysctl", &["-w", "net.ipv4.conf.csqtt1.rp_filter=2"]).await;
+    // swg-panel: the instance's own TUN (stock: csqtt1).
+    let iface_rp_filter = format!("net.ipv4.conf.{}.rp_filter=2", crate::swgpanel::iface());
+    let _ = command_output("sysctl", &["-w", &iface_rp_filter]).await;
     add_tproxy_shared_rules().await?;
     add_tproxy_rules(port).await?;
     let _ = command_output("ip", &["route", "flush", "cache"]).await;
@@ -564,8 +566,8 @@ fn tproxy_comment(port: u16) -> String {
 async fn tproxy_interception_present(port: u16) -> bool {
     let port_arg = port.to_string();
     let comment = tproxy_comment(port);
-    let iface = crate::tun_device::TUN_IFACE;
-    let subnet = crate::tun_device::TUN_SUBNET;
+    let iface = crate::swgpanel::iface();
+    let subnet = crate::swgpanel::subnet_cidr();
     for protocol in ["tcp", "udp"] {
         if !command_success(
             "iptables",
@@ -661,9 +663,9 @@ async fn add_tproxy_rules(port: u16) -> Result<()> {
                 "PREROUTING",
                 "1",
                 "-i",
-                crate::tun_device::TUN_IFACE,
+                crate::swgpanel::iface(),
                 "-s",
-                crate::tun_device::TUN_SUBNET,
+                crate::swgpanel::subnet_cidr(),
                 "-p",
                 protocol,
                 "-m",
@@ -689,9 +691,9 @@ async fn add_tproxy_rules(port: u16) -> Result<()> {
             "INPUT",
             "1",
             "-i",
-            crate::tun_device::TUN_IFACE,
+            crate::swgpanel::iface(),
             "-s",
-            crate::tun_device::TUN_SUBNET,
+            crate::swgpanel::subnet_cidr(),
             "-m",
             "comment",
             "--comment",
@@ -784,7 +786,7 @@ async fn remove_from_subnet_rule() {
             "rule",
             "del",
             "from",
-            crate::tun_device::TUN_SUBNET,
+            crate::swgpanel::subnet_cidr(),
             "priority",
             LEGACY_POLICY_PRIORITY,
             "table",
@@ -804,7 +806,7 @@ async fn drop_new_flow_mark_rules() {
             "-D",
             "PREROUTING",
             "-s",
-            crate::tun_device::TUN_SUBNET,
+            crate::swgpanel::subnet_cidr(),
             "-m",
             "conntrack",
             "--ctstate",
@@ -833,7 +835,7 @@ async fn cleanup_mark_rules() {
             "-D",
             "PREROUTING",
             "-s",
-            crate::tun_device::TUN_SUBNET,
+            crate::swgpanel::subnet_cidr(),
             "-m",
             "comment",
             "--comment",
@@ -872,7 +874,7 @@ async fn cleanup_nat_exemption(tun_name: &str) {
                 "-D",
                 "POSTROUTING",
                 "-s",
-                crate::tun_device::TUN_SUBNET,
+                crate::swgpanel::subnet_cidr(),
                 "-o",
                 tun_name,
                 "-m",
@@ -913,7 +915,7 @@ async fn cleanup_legacy_quic_rule() {
             "-D",
             "FORWARD",
             "-s",
-            crate::tun_device::TUN_SUBNET,
+            crate::swgpanel::subnet_cidr(),
             "-p",
             "udp",
             "--dport",

@@ -876,7 +876,9 @@ fn insert_bounded_endpoint<T>(
 
 fn uplink_source_matches(packet: &[u8], tunnel_ip: Option<[u8; 4]>) -> bool {
     if packet.first().map(|version| *version >> 4) != Some(4) {
-        return true;
+        // swg-panel: under --desired a non-IPv4 uplink packet has no address of its sender to prove — dropped
+        // (stock passes it unchecked).
+        return !crate::swgpanel::ipv4_only_uplink();
     }
     match tunnel_ip {
         Some(ip) => packet.get(12..16) == Some(&ip[..]),
@@ -1415,6 +1417,9 @@ pub(crate) enum ProtocolCommand {
     },
     InjectTun {
         session_id: u64,
+        // swg-panel: the sending session's assigned tunnel address, so the executor can drop a spoofed source
+        // on this pre-tunnel path exactly as write_ingress_packet does on the steady-state path.
+        ip: [u8; 4],
         payload: Vec<u8>,
     },
     UpdateEpoch {
@@ -3300,9 +3305,12 @@ impl DataplaneLogic for ProtocolEngine {
             }
             ProtocolCommand::InjectTun {
                 session_id,
+                ip,
                 payload,
             } => {
-                if let Some(slot) = self.by_id.get(&session_id).copied()
+                // swg-panel: the same source guard as write_ingress_packet — never write a spoofed source to TUN.
+                if uplink_source_matches(&payload, Some(ip))
+                    && let Some(slot) = self.by_id.get(&session_id).copied()
                     && sink.write_tun(&payload)
                 {
                     let session = &mut self.sessions[slot];
@@ -4188,11 +4196,14 @@ async fn process_ingress_before_tunnel_event(
                 "TUN",
                 &format!("{address}: tunnel setup pending: {error}"),
             );
-        } else {
+        } else if let Some(ip) = *lock_unpoison(&session.tunnel_ip) {
+            // swg-panel: ensure_control_tunnel resolved (and set) this session's assigned address; carry it so
+            // the executor can drop a spoofed source. No address ⇒ nothing to attribute the packet to ⇒ drop.
             let _ = command(
                 &app,
                 ProtocolCommand::InjectTun {
                     session_id,
+                    ip,
                     payload,
                 },
             );
@@ -4923,7 +4934,7 @@ async fn handle_getconf(
                         session.id,
                     );
                     let ip_str = match &access {
-                        CredentialAccess::Main => crate::model::OWNER_TUNNEL_IP.to_string(),
+                        CredentialAccess::Main => crate::model::owner_tunnel_ip(),
                         CredentialAccess::Slot(slot_key) => {
                             let needs_ip =
                                 db.passwords.get(slot_key).is_some_and(|e| e.ip.is_empty());

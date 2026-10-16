@@ -1,5 +1,4 @@
 use crate::{
-    net_setup::{TUN_ADDR, TUN_IFACE},
     tokio_io::{
         IoCounters, MAX_RX_PER_PASS, PacketOutput, RxOutcome, TICK_INTERVAL_MS, TUN_RX_DRAIN_BATCH,
         TokioIo,
@@ -59,8 +58,9 @@ impl DataplaneConfig {
     pub fn new(listen: SocketAddr) -> Self {
         Self {
             listen,
-            tun_iface: TUN_IFACE.to_owned(),
-            tun_addr: TUN_ADDR.to_owned(),
+            // swg-panel: iface/addr follow --iface / --tun-addr (stock: csqtt1 / 10.66.67.1).
+            tun_iface: crate::swgpanel::iface().to_owned(),
+            tun_addr: crate::swgpanel::gw_addr().to_owned(),
             command_capacity: 4096,
         }
     }

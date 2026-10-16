@@ -2,8 +2,13 @@ use crate::packet::extract_dst_ipv4;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 
+// swg-panel: read at runtime via swgpanel::{iface, subnet_cidr, subnet_prefix} (--iface / --tun-addr); kept as the
+// stock values.
+#[allow(dead_code)]
 pub const TUN_IFACE: &str = "csqtt1";
+#[allow(dead_code)]
 pub const TUN_SUBNET: &str = "10.66.67.0/24";
+#[allow(dead_code)]
 const SUBNET_PREFIX: [u8; 3] = [10, 66, 67];
 
 pub type SessionId = u64;
@@ -482,7 +487,9 @@ impl Default for RouteTable {
 
 #[inline(always)]
 pub fn route_index(ip: [u8; 4]) -> Option<usize> {
-    (ip[..3] == SUBNET_PREFIX).then_some(ip[3] as usize)
+    // swg-panel: the /24 prefix follows the instance's --tun-addr (stock: 10.66.67). One process = one
+    // subnet, so this reads a process-global set once at boot.
+    (ip[..3] == crate::swgpanel::subnet_prefix()).then_some(ip[3] as usize)
 }
 
 pub fn parse_ipv4(value: &str) -> Option<[u8; 4]> {
