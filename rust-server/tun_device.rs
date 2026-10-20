@@ -35,7 +35,7 @@ const FLOW_EVICT_EVERY: u32 = 1024;
 const FLOW_IDLE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 const SMALL_UDP_MAX_LEN: usize = 300;
 const SMALL_UDP_STICKY: std::time::Duration = std::time::Duration::from_secs(1);
-// The small-UDP pin holds a flow on ONE stream, and VK caps each allocation at about one stream's
+// swg-panel: the small-UDP pin holds a flow on ONE stream, and VK caps each allocation at about one stream's
 // rate (~2 Mbit/s): a pinned QUIC download or nested tunnel fell from 20 to 2.1 Mbit/s. A flow keeps its pin
 // only while it fits in one stream (3/4 of TB_RATE); above that it is bulk for BULK_HOLD and rotates in bursts.
 const PIN_WINDOW: std::time::Duration = std::time::Duration::from_millis(250);
@@ -659,7 +659,7 @@ mod tests {
 
     #[test]
     fn downlink_bulk_udp_with_small_packets_is_not_pinned() {
-        // A QUIC-like download (1300-byte packets at ~20 Mbit/s, a small one every 200 ms) must spread.
+        // swg-panel: a QUIC-like download (1300-byte packets at ~20 Mbit/s, a small one every 200 ms) must spread.
         let mut table = RouteTable::new();
         for w in 1..=10u16 {
             assert!(table.register(ip(2), w as _, w as _, w as _, w as _));
@@ -678,7 +678,7 @@ mod tests {
 
     #[test]
     fn downlink_game_flow_with_large_packets_stays_pinned() {
-        // The Steam fix stands for a flow that fits one stream (64 pkt/s, small and 1200-byte mixed).
+        // swg-panel: the Steam fix stands for a flow that fits one stream (64 pkt/s, small and 1200-byte mixed).
         let mut table = RouteTable::new();
         for w in 1..=3u16 {
             assert!(table.register(ip(2), w as _, w as _, w as _, w as _));
