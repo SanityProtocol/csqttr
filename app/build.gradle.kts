@@ -69,7 +69,7 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "csqtt.quic.amurcanov"
+        applicationId = "net.sanityprotocol.csqtt"   // our own ID (operator, 2026-10-20): installs beside amurcanov's app, whose key we do not have
         minSdk = 26
         targetSdk = 37
         versionCode = 231
