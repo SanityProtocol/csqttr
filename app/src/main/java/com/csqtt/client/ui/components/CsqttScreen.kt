@@ -73,11 +73,17 @@ fun CsqttScreen(
                         tint = Color.Unspecified,
                         modifier = Modifier.height(22.dp)
                     )
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_v250_by_amurcanov),
-                        contentDescription = "v2.5.0 by amurcanov",
-                        tint = Color.Unspecified,
-                        modifier = Modifier.height(13.dp)
+                    // SanityProtocol build: text in the drawn subtitle's gradient (ic_v250_by_amurcanov), version from the build
+                    Text(
+                        text = "v${com.csqtt.client.BuildConfig.VERSION_NAME} by amurcanov · сборка SanityProtocol",
+                        style = androidx.compose.ui.text.TextStyle(
+                            brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
+                                listOf(Color(0xFF45B7FF), Color(0xFF2087FF), Color(0xFF075BFF))
+                            ),
+                        ),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
                     )
                 }
 
