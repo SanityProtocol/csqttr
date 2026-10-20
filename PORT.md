@@ -10,6 +10,10 @@ small packet on ONE stream; VK caps an allocation near 2 Mbit/s downlink, so a Q
 Mbit/s. A flow keeps the pin only while it fits in one stream (3/4 of TB_RATE in 250 ms windows; above it bulk for 2 s,
 rotating in 16 KiB bursts). Tests downlink_bulk_udp_with_small_packets_is_not_pinned / downlink_game_flow_with_large_packets_stays_pinned.
 
+**2.5.1-2 (2026-10-20):** under `--no-web` the server no longer prints the web panel's generated password (it opens
+nothing — no web panel runs — and a secret has no place in the journal), and logs "Web: off (--no-web)" instead of an
+address nothing listens on. Nothing else changes.
+
 ## What 2.5 changed under the 2.1.9-4 patch
 
 | 2.1.9-4 part | in 2.5 | port |

@@ -1134,7 +1134,10 @@ async fn async_main() -> Result<()> {
 
     let web_pass = if args.web_pass.is_empty() {
         let value = random_password() + &random_password();
-        println!("[INIT] generated web password: {value}");
+        // swg-panel: headless runs no web panel, so this password opens nothing — and a secret has no place in the journal.
+        if !swgpanel::headless() {
+            println!("[INIT] generated web password: {value}");
+        }
         value
     } else {
         args.web_pass
@@ -1224,7 +1227,7 @@ async fn async_main() -> Result<()> {
         });
     }
 
-    log_event(&app, "INFO", "SYSTEM", " CSQTT Server 2.5.1 (swg-panel build of amurcanov 2.5.0)");
+    log_event(&app, "INFO", "SYSTEM", " CSQTT Server 2.5.1-2 (swg-panel build of amurcanov 2.5.0)");
     log_event(
         &app,
         "INFO",
@@ -1232,12 +1235,13 @@ async fn async_main() -> Result<()> {
         &format!(" RTP AEAD: {}", app.listen),
     );
     log_event(&app, "INFO", "SYSTEM", " Tunnel: Userspace TUN (CSQTT)");
-    log_event(
-        &app,
-        "INFO",
-        "SYSTEM",
-        &format!(" Web: 0.0.0.0:{}", app.web_port),
-    );
+    // swg-panel: headless binds no web port — say so rather than name an address nothing listens on.
+    let web_line = if swgpanel::headless() {
+        " Web: off (--no-web)".to_owned()
+    } else {
+        format!(" Web: 0.0.0.0:{}", app.web_port)
+    };
+    log_event(&app, "INFO", "SYSTEM", &web_line);
 
     let web_app = app.clone();
 
