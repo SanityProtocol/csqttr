@@ -179,7 +179,7 @@ fun InfoTab(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             InfoHeroCard(
-                currentVersion = currentVersion,
+                currentVersion = "$currentVersion · сборка SanityProtocol",
                 onCryptoClick = { showCryptoDialog = true },
                 onTelegramClick = { openUrlInBrowser(context, TelegramUrl) },
             )
@@ -235,44 +235,9 @@ fun InfoTab(
             }
 
             WideActionTile(
-                title = "Проверить обновления",
-                subtitle = updateStatus,
-                onClick = {
-                    if (isCheckingUpdates) return@WideActionTile
-                    isCheckingUpdates = true
-                    scope.launch {
-                        val checkedAt = System.currentTimeMillis()
-                        val release = fetchLatestReleaseInfo(currentVersion)
-                        val latest = release?.versionTag
-                        settingsStore.saveUpdateState(
-                            lastCheckAt = checkedAt,
-                            latestVersion = latest ?: "",
-                            error = if (release == null) "Не удалось проверить" else ""
-                        )
-                        isCheckingUpdates = false
-
-                        if (release == null) {
-                            val message = if (updateLatestVersion.isNotBlank()) {
-                                "Не удалось проверить. Последняя известная версия: $updateLatestVersion"
-                            } else {
-                                "Не удалось проверить обновления"
-                            }
-                            context.showRaisedToast(message, Toast.LENGTH_SHORT)
-                            return@launch
-                        }
-
-                        if (isNewerVersion(currentVersion, release.versionTag)) {
-                            settingsStore.saveUpdateDialogShown(release.versionTag, checkedAt)
-                            pendingManualRelease = release
-                        } else {
-                            Toast.makeText(
-                                context,
-                                "У вас уже последняя версия: ${release.versionTag}",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    }
-                },
+                title = "Обновления",
+                subtitle = "Сборка SanityProtocol: новые версии — на странице подписки",
+                onClick = { openUrlInBrowser(context, CsqttConstants.Update.SANITY_RELEASES_URL) },
                 icon = {
                     Icon(
                         imageVector = Icons.Outlined.Update,

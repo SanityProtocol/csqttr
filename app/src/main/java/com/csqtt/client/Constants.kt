@@ -97,6 +97,10 @@ object CsqttConstants {
             "https://github.com/amurcanov/csqtt/releases/tag/"
         const val GITHUB_TAGS_URL =
             "https://api.github.com/repos/amurcanov/csqtt/tags?per_page=100"
+        // SanityProtocol build: new versions are published with the swg-panel csqtt server releases and handed out by
+        // the panel's subscription page. The version check against amurcanov/csqtt is off: his APK cannot install
+        // over this one (another signing key).
+        const val SANITY_RELEASES_URL = "https://github.com/SanityProtocol/swg-panel/releases?q=csqtt"
         const val GITHUB_TAG_TREE_URL_PREFIX =
             "https://github.com/amurcanov/csqtt/tree/"
     }
@@ -178,7 +182,7 @@ object CsqttConstants {
 
     object Links {
         const val RELEASES = "https://github.com/amurcanov/csqtt/releases"
-        const val ISSUES = "https://github.com/amurcanov/csqtt/issues/new"
+        const val ISSUES = "https://github.com/SanityProtocol/swg-panel/issues"
         const val DEVELOPER_PROFILE = "https://github.com/amurcanov"
         const val REPOSITORY = "https://github.com/amurcanov/csqtt"
         const val TELEGRAM = "https://t.me/amurcanov_telegram"

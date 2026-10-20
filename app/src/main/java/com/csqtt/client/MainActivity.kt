@@ -378,6 +378,7 @@ fun MainScreen(
     }
 
     LaunchedEffect(updateCheckIntervalHours) {
+        return@LaunchedEffect   // SanityProtocol build: no version check against amurcanov/csqtt (CsqttConstants.Update)
         if (updateCheckIntervalHours == UPDATE_CHECK_NEVER) return@LaunchedEffect
 
         val intervalMillis = updateIntervalHoursToMillis(updateCheckIntervalHours)
