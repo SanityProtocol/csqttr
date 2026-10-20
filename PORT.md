@@ -1,9 +1,14 @@
 # csqtt 2.5.0 — the swg-panel patch, ported (build label 2.5.0, release tag csqtt-2.5.0)
 
-Source: amurcanov's source.zip (2026-10-16). Provenance: its server inputs hash to the `buildInputSha256` of the
-`csqtt.server-provenance.json` inside his 2.5.0 APK (recomputed with his own recipe) — the zip IS the source of the
-APK's bundled server binaries. The zip leaves out `app/`; `app/src/main/assets/domains.txt` (an `include_str!` of
-web_panel.rs) is taken from the APK. Stays LOCAL until he publishes the source (a patch carries his lines).
+Source: amurcanov's PUBLISHED 2.5.0 — https://github.com/amurcanov/csqtt commit d02da9b, release v2.5.0 (2026-10-20). Its
+server build-input hash (his recipe, scripts/server_asset_provenance.ps1) is 61520B20…, the `buildInputSha256` in his v2.5.0
+APK's csqtt.server-provenance.json. (The first port, 2026-10-16, was on the pre-release source.zip he sent; rebased here
+with no conflicts.)
+
+**Beyond the integration, one datapath fix** (rust-server/tun_device.rs): his small-UDP pin held any UDP flow carrying a
+small packet on ONE stream; VK caps an allocation near 2 Mbit/s downlink, so a QUIC-like download fell from 20 to 2.1
+Mbit/s. A flow keeps the pin only while it fits in one stream (3/4 of TB_RATE in 250 ms windows; above it bulk for 2 s,
+rotating in 16 KiB bursts). Tests downlink_bulk_udp_with_small_packets_is_not_pinned / downlink_game_flow_with_large_packets_stays_pinned.
 
 ## What 2.5 changed under the 2.1.9-4 patch
 
