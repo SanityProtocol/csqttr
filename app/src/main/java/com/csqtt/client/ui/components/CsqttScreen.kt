@@ -75,15 +75,16 @@ fun CsqttScreen(
                     )
                     // SanityProtocol build: text in the drawn subtitle's gradient (ic_v250_by_amurcanov), version from the build
                     Text(
-                        text = "v${com.csqtt.client.BuildConfig.VERSION_NAME} by amurcanov · сборка SanityProtocol",
+                        text = "v${com.csqtt.client.BuildConfig.VERSION_NAME} by amurcanov\nсборка SanityProtocol",
                         style = androidx.compose.ui.text.TextStyle(
                             brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
                                 listOf(Color(0xFF45B7FF), Color(0xFF2087FF), Color(0xFF075BFF))
                             ),
                         ),
                         fontSize = 11.sp,
+                        lineHeight = 13.sp,
                         fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
+                        maxLines = 2,
                     )
                 }
 
