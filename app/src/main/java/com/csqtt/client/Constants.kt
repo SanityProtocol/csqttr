@@ -101,6 +101,7 @@ object CsqttConstants {
         // the panel's subscription page. The version check against amurcanov/csqtt is off: his APK cannot install
         // over this one (another signing key).
         const val SANITY_RELEASES_URL = "https://github.com/SanityProtocol/swg-panel/releases?q=csqtt"
+        val CHECK_DISABLED = true   // not const: the check's code stays reachable (its null checks smart-cast)
         const val GITHUB_TAG_TREE_URL_PREFIX =
             "https://github.com/amurcanov/csqtt/tree/"
     }
