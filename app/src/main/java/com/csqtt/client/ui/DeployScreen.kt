@@ -324,40 +324,50 @@ private fun ManualPortFields(
     state: DeployUiState,
     onAction: (DeployAction) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(CsqttSpacing.Sm),
-    ) {
-        DeployTextField(
-            value = state.sshPort,
-            onValueChange = { onAction(DeployAction.SshPortChanged(it)) },
-            label = "SSH-порт",
-            placeholder = "22",
-            enabled = !state.isDeploying,
-            isError = state.showValidation && !isValidPort(state.sshPort),
-            keyboardType = KeyboardType.Number,
-            modifier = Modifier.weight(1f),
-        )
-        DeployTextField(
-            value = state.peerPort,
-            onValueChange = { onAction(DeployAction.PeerPortChanged(it)) },
-            label = "Порт туннеля",
-            placeholder = state.instance.defaultPeerPort.toString(),
-            enabled = !state.isDeploying,
-            isError = state.showValidation && !isValidPort(state.peerPort),
-            keyboardType = KeyboardType.Number,
-            modifier = Modifier.weight(1f),
-        )
-        DeployTextField(
-            value = state.webPort,
-            onValueChange = { onAction(DeployAction.WebPortChanged(it)) },
-            label = "Порт WEB-панели",
-            placeholder = state.instance.defaultWebPort.toString(),
-            enabled = !state.isDeploying,
-            isError = state.showValidation && !isValidPort(state.webPort),
-            keyboardType = KeyboardType.Number,
-            modifier = Modifier.weight(1f),
-        )
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(CsqttSpacing.Sm),
+        ) {
+            DeployTextField(
+                value = state.sshPort,
+                onValueChange = { onAction(DeployAction.SshPortChanged(it)) },
+                label = "SSH-порт",
+                placeholder = "22",
+                enabled = !state.isDeploying,
+                isError = state.showValidation && !isValidPort(state.sshPort),
+                keyboardType = KeyboardType.Number,
+                modifier = Modifier.weight(1f),
+            )
+            DeployTextField(
+                value = state.peerPort,
+                onValueChange = { onAction(DeployAction.PeerPortChanged(it)) },
+                label = "Порт туннеля",
+                placeholder = state.instance.defaultPeerPort.toString(),
+                enabled = !state.isDeploying,
+                isError = state.showValidation && !isValidPort(state.peerPort),
+                keyboardType = KeyboardType.Number,
+                modifier = Modifier.weight(1f),
+            )
+            DeployTextField(
+                value = state.webPort,
+                onValueChange = { onAction(DeployAction.WebPortChanged(it)) },
+                label = "Порт WEB-панели",
+                placeholder = state.instance.defaultWebPort.toString(),
+                enabled = !state.isDeploying,
+                isError = state.showValidation && !isValidPort(state.webPort),
+                keyboardType = KeyboardType.Number,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        if (state.sideReplacesStockPorts()) {
+            Text(
+                text = "46000 и 46002 заняты сервером 2.1.9 — второй сервер встанет на ${state.instance.defaultPeerPort} и ${state.instance.defaultWebPort}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = CsqttSpacing.Xs),
+            )
+        }
     }
 }
 

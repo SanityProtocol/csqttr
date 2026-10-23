@@ -80,6 +80,14 @@ class DeployUiStateTest {
         assertTrue(side.peer == 46100 && side.web == 46102 && side.ssh == 22)
         val main = resolveServerPorts(manualPorts = false, sshPort = "22", peerPort = "1", webPort = "2", instance = DeployInstance.MAIN)
         assertTrue(main.peer == 46000 && main.web == 46002)
+        // manual ports left at the stock values (2.5.1 prefilled them) are the 2.1.9 server's: next to it they mean "not chosen"
+        val prefilled = resolveServerPorts(manualPorts = true, sshPort = "2222", peerPort = "46000", webPort = "46002", instance = DeployInstance.SIDE)
+        assertTrue(prefilled.peer == 46100 && prefilled.web == 46102 && prefilled.ssh == 2222)
+        val replaceKeeps = resolveServerPorts(manualPorts = true, sshPort = "22", peerPort = "46000", webPort = "46002", instance = DeployInstance.MAIN)
+        assertTrue(replaceKeeps.peer == 46000 && replaceKeeps.web == 46002)
+        val sideState = completeState.copy(instance = DeployInstance.SIDE, manualPorts = true, peerPort = "46000", webPort = "46002")
+        assertTrue(sideState.sideReplacesStockPorts() && sideState.panelDisplayUrl.startsWith("https://server.example:46102/"))
+        assertFalse(sideState.copy(instance = DeployInstance.MAIN).sideReplacesStockPorts())
         // manual ports are the user's, whatever the mode
         val manual = resolveServerPorts(manualPorts = true, sshPort = "22", peerPort = "47000", webPort = "47002", instance = DeployInstance.SIDE)
         assertTrue(manual.peer == 47000 && manual.web == 47002)

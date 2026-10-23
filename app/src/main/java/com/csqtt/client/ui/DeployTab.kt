@@ -111,7 +111,7 @@ internal data class DeployUiState(
     val panelDisplayUrl: String
         get() {
             val h = host.ifBlank { "IP" }
-            val p = if (manualPorts) (webPort.toIntOrNull() ?: instance.defaultWebPort) else instance.defaultWebPort
+            val p = resolveServerPorts(manualPorts, sshPort, peerPort, webPort, instance).web
             val u = if (secretPathUuid.isNotBlank()) {
                 if (secretPathUuid.startsWith("/")) secretPathUuid else "/$secretPathUuid"
             } else {
@@ -177,12 +177,24 @@ internal fun resolveServerPorts(
     return EffectiveServerPorts(
         ssh = sshPort.toIntOrNull()?.takeIf { it in 1..65535 }
             ?: CsqttConstants.Network.DEFAULT_SSH_PORT,
-        peer = peerPort.toIntOrNull()?.takeIf { it in 1..65535 }
+        peer = sidePort(instance, peerPort.toIntOrNull()?.takeIf { it in 1..65535 }, CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT)
             ?: instance.defaultPeerPort,
-        web = webPort.toIntOrNull()?.takeIf { it in 1..65535 }
+        web = sidePort(instance, webPort.toIntOrNull()?.takeIf { it in 1..65535 }, CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT)
             ?: instance.defaultWebPort,
     )
 }
+
+// «Рядом с 2.1.9» with "Ручные порты" on: the STOCK ports there are the 2.1.9 server's, never a choice for the second one.
+// They are what 2.5.1 prefilled for anyone who switched manual ports on (to change only the SSH port, say), and the same
+// fields are the profile's connection port, so they are not rewritten in the form — the deploy reads them as "not chosen"
+// and takes the side defaults (the form says so); a successful deploy then stores the real ones.
+private fun sidePort(instance: DeployInstance, port: Int?, stockPort: Int): Int? =
+    if (instance == DeployInstance.SIDE && port == stockPort) null else port
+
+internal fun DeployUiState.sideReplacesStockPorts(): Boolean =
+    instance == DeployInstance.SIDE && manualPorts &&
+        (peerPort == CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT.toString() ||
+            webPort == CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT.toString())
 
 internal fun hasWebPanelCredentials(login: String, password: String): Boolean =
     login.isNotBlank() && password.isNotBlank()
