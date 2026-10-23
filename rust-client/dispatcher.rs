@@ -817,7 +817,6 @@ impl Dispatcher {
     }
 
     pub fn push_inbound(&self, packet: PacketBuf) {
-        let wake = self.inbound.len() <= 2;
         let mut packet = packet;
         if let Err(returned) = self.inbound.push(packet) {
             packet = returned;
@@ -832,9 +831,10 @@ impl Dispatcher {
                 );
             }
         }
-        if wake {
-            self.tun_wake.notify_one();
-        }
+        // After the push, every time: deciding from the length BEFORE it lost a wakeup — the writers could drain the
+        // queue and park between that check and the push, and the packet then waited for the next downlink packet.
+        // Notify coalesces into one stored permit, so this costs nothing when nobody waits.
+        self.tun_wake.notify_one();
     }
 
     pub fn return_packet(&self, mut packet: PacketBuf) {
@@ -2200,6 +2200,46 @@ mod tests {
 
         let second = dispatcher.pop_inbound().unwrap();
         assert_eq!(second.as_slice()[19], 3);
+    }
+
+    #[tokio::test]
+    async fn test_push_inbound_wakes_the_writer_whatever_the_queue_length() {
+        let profile = QueueProfile::for_worker_count(1);
+        let pool = PacketPool::new(profile.inbound_capacity + 8);
+        let dispatcher = Dispatcher {
+            workers: ArcSwap::from_pointee(Vec::new()),
+            inbound: ArrayQueue::new(profile.inbound_capacity),
+            outbound_capacity: profile.outbound_capacity,
+            tun_wake: Arc::new(Notify::new()),
+            tun_io_lost: Arc::new(Notify::new()),
+            cancel: CancellationToken::new(),
+            tasks: tokio::sync::Mutex::new(Vec::new()),
+            domain_routing: Arc::new(ArcSwap::from_pointee(DomainRoutingConfig::default())),
+            direct_ips: Arc::new(ArcSwap::from_pointee(HashSet::new())),
+            dns_domain_map: Arc::new(crate::sni::DnsDomainMap::default()),
+            direct_relay: None,
+            uplink_state: Mutex::new(UplinkState::new()),
+            pool: pool.clone(),
+            reassembler: crate::wire_protocol::ShardedReassembler::new(),
+            next_frag_id: std::sync::atomic::AtomicU16::new(1),
+            termination: Arc::new(OnceLock::new()),
+        };
+        let packet = || {
+            let mut p = pool.acquire();
+            p.set_read_len(60).unwrap();
+            p.as_mut_slice()[0] = 0x45;
+            p
+        };
+        // three already queued (more than the old "<= 2" threshold), the writer's permit consumed: it is parked
+        for _ in 0..3 {
+            dispatcher.push_inbound(packet());
+        }
+        let wait = std::time::Duration::from_millis(50);
+        assert!(tokio::time::timeout(wait, dispatcher.tun_wake.notified()).await.is_ok());
+        assert!(tokio::time::timeout(wait, dispatcher.tun_wake.notified()).await.is_err());
+        // the next packet must wake it — before the fix it waited for the next downlink packet
+        dispatcher.push_inbound(packet());
+        assert!(tokio::time::timeout(wait, dispatcher.tun_wake.notified()).await.is_ok());
     }
 
     #[tokio::test]
