@@ -1295,6 +1295,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_smoltcp_direct_tcp_syn() {
+        smoltcp_syn_gets_syn_ack(Duration::ZERO).await;
+    }
+
+    // An idle stack with no socket waits only on its notify (no 5 ms re-poll): the first SYN after a quiet spell must
+    // still wake it.
+    #[tokio::test]
+    async fn test_smoltcp_direct_tcp_syn_after_idle() {
+        smoltcp_syn_gets_syn_ack(Duration::from_millis(300)).await;
+    }
+
+    async fn smoltcp_syn_gets_syn_ack(idle: Duration) {
         let domain_routing = Arc::new(ArcSwap::from_pointee(
             crate::dispatcher::DomainRoutingConfig {
                 enabled: true,
@@ -1327,6 +1338,7 @@ mod tests {
             .direct_ips
             .store(Arc::new(std::iter::once(dst.ip()).collect()));
 
+        tokio::time::sleep(idle).await;
         let syn_raw = build_tcp_packet(src, dst, 1000, 0, 0x02, &[]).unwrap();
         let mut pkt = pool.try_acquire().unwrap();
         pkt.extend_tail(syn_raw.len())
