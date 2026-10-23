@@ -37,6 +37,7 @@ internal data class DeploySettingsSnapshot(
     val serverWebPort: Int = CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT,
     val sshKeysMode: Boolean = false,
     val dockerInstall: Boolean = false,
+    val deployInstance: String = "side",
     val secretPathEnabled: Boolean = true,
     val secretPathUuid: String = "",
     val sshPrivateKey: String = "",
@@ -95,6 +96,7 @@ class SettingsStore(context: Context) {
         private val DEPLOY_SSH_PORT = stringPreferencesKey("deploy_ssh_port")
         private val SSH_KEYS_MODE = booleanPreferencesKey("ssh_keys_mode")
         private val DOCKER_INSTALL = booleanPreferencesKey("docker_install")
+        private val DEPLOY_INSTANCE = stringPreferencesKey("deploy_instance")   // "side" (absent) | "main"
         private val DEPLOY_SECRET_PATH_ENABLED = booleanPreferencesKey("deploy_secret_path_enabled")
         private val DEPLOY_SECRET_PATH_UUID = stringPreferencesKey("deploy_secret_path_uuid")
         private val SSH_PRIVATE_KEY = stringPreferencesKey("ssh_private_key")
@@ -425,6 +427,7 @@ class SettingsStore(context: Context) {
                 ?: CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT,
             sshKeysMode = prefs[getProfileKey(SSH_KEYS_MODE, profile)] ?: false,
             dockerInstall = prefs[getProfileKey(DOCKER_INSTALL, profile)] ?: false,
+            deployInstance = prefs[getProfileKey(DEPLOY_INSTANCE, profile)] ?: "side",
             secretPathEnabled = true,
             secretPathUuid = prefs[getProfileKey(DEPLOY_SECRET_PATH_UUID, profile)] ?: "",
             sshPrivateKey = readSecret(prefs, SSH_PRIVATE_KEY_ENCRYPTED, SSH_PRIVATE_KEY, profile),
@@ -948,6 +951,31 @@ class SettingsStore(context: Context) {
         dataStore.edit { prefs ->
             val profile = prefs[ACTIVE_PROFILE] ?: 0
             prefs[getProfileKey(SSH_KEYS_MODE, profile)] = enabled
+        }
+    }
+
+    suspend fun saveDeployInstance(instance: String) {
+        dataStore.edit { prefs ->
+            val profile = prefs[ACTIVE_PROFILE] ?: 0
+            prefs[getProfileKey(DEPLOY_INSTANCE, profile)] = instance
+        }
+    }
+
+    // After a successful deploy the profile points at the server it installed: a server on ports other than the stock
+    // ones (the «Рядом с 2.1.9» server's 46100/46102) turns "Ручные порты" on with them — the connection dials
+    // serverPeerPort only then, and 46000 is the stock server's — and an empty server address becomes the host.
+    // Nothing changes before a deploy succeeds.
+    suspend fun saveDeployedServer(host: String, peerPort: Int, webPort: Int) {
+        dataStore.edit { prefs ->
+            val profile = prefs[ACTIVE_PROFILE] ?: 0
+            if ((prefs[getProfileKey(PEER, profile)] ?: "").isBlank() && host.isNotBlank()) {
+                prefs[getProfileKey(PEER, profile)] = host
+            }
+            if (peerPort != CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT || webPort != CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT) {
+                prefs[getProfileKey(MANUAL_PORTS_ENABLED, profile)] = true
+                prefs[getProfileKey(SERVER_PEER_PORT, profile)] = peerPort
+                prefs[getProfileKey(SERVER_WEB_PORT, profile)] = webPort
+            }
         }
     }
 
@@ -1547,6 +1575,7 @@ class SettingsStore(context: Context) {
             deploy.put("deploy_ssh_port", prefs[DEPLOY_SSH_PORT] ?: "")
             deploy.put("server_web_port", prefs[SERVER_WEB_PORT] ?: CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT)
             deploy.put("docker_install", prefs[DOCKER_INSTALL] ?: true)
+            deploy.put("deploy_instance", prefs[DEPLOY_INSTANCE] ?: "side")
             deploy.put("ssh_keys_mode", prefs[SSH_KEYS_MODE] ?: false)
             deploy.put("vk_hashes", prefs[VK_HASHES] ?: "")
             deploy.put("secondary_vk_hash", prefs[SECONDARY_VK_HASH] ?: "")
@@ -1633,6 +1662,7 @@ class SettingsStore(context: Context) {
                     if (deploy.has("deploy_ssh_port")) mutable[DEPLOY_SSH_PORT] = deploy.getString("deploy_ssh_port")
                     if (deploy.has("server_web_port")) mutable[SERVER_WEB_PORT] = deploy.getInt("server_web_port")
                     if (deploy.has("docker_install")) mutable[DOCKER_INSTALL] = deploy.getBoolean("docker_install")
+                    if (deploy.has("deploy_instance")) mutable[DEPLOY_INSTANCE] = deploy.getString("deploy_instance")
                     if (deploy.has("ssh_keys_mode")) mutable[SSH_KEYS_MODE] = deploy.getBoolean("ssh_keys_mode")
                     if (deploy.has("vk_hashes")) mutable[VK_HASHES] = deploy.getString("vk_hashes")
                     if (deploy.has("secondary_vk_hash")) mutable[SECONDARY_VK_HASH] = deploy.getString("secondary_vk_hash")

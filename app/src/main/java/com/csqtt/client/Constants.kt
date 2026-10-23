@@ -23,6 +23,9 @@ object CsqttConstants {
         const val DEFAULT_SERVER_PEER_PORT = 46000
         const val DEFAULT_SSH_PORT = 22
         const val DEFAULT_SERVER_WEB_PORT = 46002
+        // «Рядом с 2.1.9»: the second server's own ports (deploy.sh CSQTT_INSTANCE=side)
+        const val DEFAULT_SIDE_SERVER_PEER_PORT = 46100
+        const val DEFAULT_SIDE_SERVER_WEB_PORT = 46102
     }
 
     object Tunnel {

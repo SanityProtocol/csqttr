@@ -18,10 +18,11 @@ import com.csqtt.client.ui.design.CsqttSizes
 
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
+import com.csqtt.client.ui.DeployInstance
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun UninstallConfirmDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
+internal fun UninstallConfirmDialog(instance: DeployInstance, onDismiss: () -> Unit, onConfirm: () -> Unit) {
     var confirmText by remember { mutableStateOf("") }
     val isConfirmed = confirmText.trim().lowercase() == "да"
 
@@ -44,13 +45,17 @@ fun UninstallConfirmDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    "Удаление CSQTT с сервера",
+                    if (instance == DeployInstance.SIDE) "Удаление сервера рядом с 2.1.9" else "Удаление CSQTT с сервера",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.error
                 )
                 Text(
-                    "Будут удалены: бинарник, systemd-сервис, бот, конфигурация CSQTT и только помеченные правила firewall/NAT для CSQTT.\n\nЭто действие необратимо.",
+                    if (instance == DeployInstance.SIDE) {
+                        "Будет удалён сервер csqtt25: его бинарник, сервис или контейнер и только его правила firewall/NAT. Сервер 2.1.9 на этом VPS не затрагивается. База пользователей остаётся в /etc/csqtt25.\n\nЭто действие необратимо."
+                    } else {
+                        "Будут удалены: бинарник, systemd-сервис, бот, конфигурация CSQTT и только помеченные правила firewall/NAT для CSQTT. Сервер рядом с 2.1.9 (csqtt25), если он есть, не затрагивается.\n\nЭто действие необратимо."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     lineHeight = 15.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant

@@ -2688,6 +2688,24 @@ side_preflight() {
     side_assert_port_free t "$WEB_PORT" "TCP-порт WEB-панели"
 }
 
+# Main mode takes its ports by force (stock behaviour: whatever holds the peer port is killed). The one holder it must never
+# take them from is the server next to it: after a side deploy the app's profile keeps the side's ports as "manual", so a
+# later «Вместо 2.1.9» from it would otherwise kill csqtt25 and take its port. Refused before anything is stopped.
+main_preflight() {
+    local proto port pid exe
+    for proto in u t; do
+        port="$PEER_PORT"; [ "$proto" = t ] && port="$WEB_PORT"
+        while IFS= read -r pid; do
+            [ -n "$pid" ] || continue
+            exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+            case "$exe" in
+                /usr/local/lib/csqtt25/*|/opt/csqtt25/*)
+                    die "Порт ${port} занят сервером рядом с 2.1.9 (csqtt25). Для «Вместо 2.1.9» выключите «Ручные порты» или укажите другие порты" "$EXIT_PREFLIGHT_FAILED" ;;
+            esac
+        done < <(ss -H -l"${proto}"np "sport = :${port}" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -un || true)
+    done
+}
+
 handle_unexpected_error() {
     local line="$1" status="$2"
     trap - ERR
@@ -2738,7 +2756,7 @@ main() {
             detect_os
             run_timed "зависимости" install_prerequisites
             require_runtime_tools
-            [ "$CSQTT_ROLE" = side ] && side_preflight
+            if [ "$CSQTT_ROLE" = side ]; then side_preflight; else main_preflight; fi
             if [ "$DEPLOY_MODE" = "docker" ]; then
                 prog 0.12 "Docker..."
                 run_timed "Docker" ensure_docker

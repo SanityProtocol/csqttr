@@ -71,6 +71,23 @@ class DeployUiStateTest {
     }
 
     @Test
+    fun `next to 2_1_9 is the default and takes its own ports`() {
+        assertTrue(DeployInstance.fromStored(null) == DeployInstance.SIDE)
+        assertTrue(DeployInstance.fromStored("garbage") == DeployInstance.SIDE)
+        assertTrue(DeployInstance.fromStored("main") == DeployInstance.MAIN)
+        assertTrue(DeployUiState().instance == DeployInstance.SIDE)
+        val side = resolveServerPorts(manualPorts = false, sshPort = "22", peerPort = "46000", webPort = "46002", instance = DeployInstance.SIDE)
+        assertTrue(side.peer == 46100 && side.web == 46102 && side.ssh == 22)
+        val main = resolveServerPorts(manualPorts = false, sshPort = "22", peerPort = "1", webPort = "2", instance = DeployInstance.MAIN)
+        assertTrue(main.peer == 46000 && main.web == 46002)
+        // manual ports are the user's, whatever the mode
+        val manual = resolveServerPorts(manualPorts = true, sshPort = "22", peerPort = "47000", webPort = "47002", instance = DeployInstance.SIDE)
+        assertTrue(manual.peer == 47000 && manual.web == 47002)
+        assertTrue(completeState.copy(instance = DeployInstance.SIDE).panelDisplayUrl.startsWith("https://server.example:46102/"))
+        assertTrue(completeState.copy(instance = DeployInstance.MAIN).panelDisplayUrl.startsWith("https://server.example:46002/"))
+    }
+
+    @Test
     fun `manual ports preserve valid custom values`() {
         val ports = resolveServerPorts(
             manualPorts = true,

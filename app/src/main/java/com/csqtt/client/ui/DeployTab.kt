@@ -57,6 +57,20 @@ import com.csqtt.client.ui.design.CsqttTheme
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
+/**
+ * Which server a deploy installs (deploy.sh CSQTT_INSTANCE). SIDE — «Рядом с 2.1.9», the default: a second, independent
+ * server (csqtt25) next to a stock 2.1.9, which keeps serving its own clients. MAIN — «Вместо 2.1.9»: the stock layout,
+ * replacing whatever runs there (or updating a 2.5 server installed that way).
+ */
+internal enum class DeployInstance(val wire: String, val defaultPeerPort: Int, val defaultWebPort: Int) {
+    SIDE("side", CsqttConstants.Network.DEFAULT_SIDE_SERVER_PEER_PORT, CsqttConstants.Network.DEFAULT_SIDE_SERVER_WEB_PORT),
+    MAIN("main", CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT, CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT);
+
+    companion object {
+        fun fromStored(value: String?): DeployInstance = entries.firstOrNull { it.wire == value } ?: SIDE
+    }
+}
+
 @Immutable
 internal data class DeployUiState(
     val host: String = "",
@@ -70,6 +84,7 @@ internal data class DeployUiState(
     val webPanelConfigured: Boolean = false,
     val sshKeysMode: Boolean = false,
     val dockerInstall: Boolean = false,
+    val instance: DeployInstance = DeployInstance.SIDE,
     val secretPathEnabled: Boolean = false,
     val secretPathUuid: String = "",
     val sshKeysFilled: Int = 0,
@@ -96,7 +111,7 @@ internal data class DeployUiState(
     val panelDisplayUrl: String
         get() {
             val h = host.ifBlank { "IP" }
-            val p = if (manualPorts) (webPort.toIntOrNull() ?: CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT) else CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT
+            val p = if (manualPorts) (webPort.toIntOrNull() ?: instance.defaultWebPort) else instance.defaultWebPort
             val u = if (secretPathUuid.isNotBlank()) {
                 if (secretPathUuid.startsWith("/")) secretPathUuid else "/$secretPathUuid"
             } else {
@@ -113,6 +128,8 @@ internal sealed interface DeployAction {
     data class ManualPortsChanged(val enabled: Boolean) : DeployAction
     data class SshKeysModeChanged(val enabled: Boolean) : DeployAction
     data class DockerInstallChanged(val enabled: Boolean) : DeployAction
+    data class InstanceChanged(val instance: DeployInstance) : DeployAction
+    data object InstanceInfo : DeployAction
     data object RegenerateSecretPath : DeployAction
     data object EditSshKeys : DeployAction
     data object DockerInfo : DeployAction
@@ -148,21 +165,22 @@ internal fun resolveServerPorts(
     sshPort: String,
     peerPort: String,
     webPort: String,
+    instance: DeployInstance = DeployInstance.MAIN,
 ): EffectiveServerPorts {
     if (!manualPorts) {
         return EffectiveServerPorts(
             ssh = CsqttConstants.Network.DEFAULT_SSH_PORT,
-            peer = CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT,
-            web = CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT,
+            peer = instance.defaultPeerPort,
+            web = instance.defaultWebPort,
         )
     }
     return EffectiveServerPorts(
         ssh = sshPort.toIntOrNull()?.takeIf { it in 1..65535 }
             ?: CsqttConstants.Network.DEFAULT_SSH_PORT,
         peer = peerPort.toIntOrNull()?.takeIf { it in 1..65535 }
-            ?: CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT,
+            ?: instance.defaultPeerPort,
         web = webPort.toIntOrNull()?.takeIf { it in 1..65535 }
-            ?: CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT,
+            ?: instance.defaultWebPort,
     )
 }
 
@@ -198,6 +216,7 @@ internal fun DeployTab(
     val savedManualPorts = savedSettings.manualPortsEnabled
     val savedSshKeysMode = savedSettings.sshKeysMode
     val savedDockerInstall = savedSettings.dockerInstall
+    val savedInstance = DeployInstance.fromStored(savedSettings.deployInstance)
     val savedSshPrivateKey = savedSettings.sshPrivateKey
     val savedSshKeyPassphrase = savedSettings.sshKeyPassphrase
     val savedSshCertificate = savedSettings.sshCertificate
@@ -228,6 +247,7 @@ internal fun DeployTab(
     var showPanelInfoDialog by rememberSaveable(savedSettings.profile) { mutableStateOf(false) }
     var showSshKeysDialog by rememberSaveable(savedSettings.profile) { mutableStateOf(false) }
     var showDockerInfoDialog by rememberSaveable(savedSettings.profile) { mutableStateOf(false) }
+    var showInstanceInfoDialog by rememberSaveable(savedSettings.profile) { mutableStateOf(false) }
 
     LaunchedEffect(savedSettings.profile, savedIp) {
         if (!generalEdited) {
@@ -289,6 +309,7 @@ internal fun DeployTab(
         webPanelConfigured = hasWebPanelCredentials(savedWebLogin, savedWebPassword),
         sshKeysMode = savedSshKeysMode,
         dockerInstall = dockerInstall,
+        instance = savedInstance,
         secretPathEnabled = secretPathEnabled,
         secretPathUuid = savedSecretPathUuid,
         sshKeysFilled = if (savedSshPrivateKey.isNotBlank()) 1 else 0,
@@ -301,7 +322,8 @@ internal fun DeployTab(
     fun startDeploy() {
         if (DeployManager.isDeploying.value) return
         if (!state.canInstall || !isDeployMainPasswordValid(savedMainPass)) return
-        val ports = resolveServerPorts(savedManualPorts, sshPort, peerPort, webPort)
+        val instance = savedInstance
+        val ports = resolveServerPorts(savedManualPorts, sshPort, peerPort, webPort, instance)
         val effectiveSshPort = ports.ssh
         val effectivePeerPort = ports.peer
         val effectiveWebPort = ports.web
@@ -336,11 +358,16 @@ internal fun DeployTab(
                     certificate = deployCertificate,
                     installInDocker = dockerInstall,
                     secretPath = savedSecretPathUuid.ifBlank { "" },
+                    instance = instance,
                 )
                 if (success) {
                     passwordToSynchronizeAfterDeploy(success, effectiveMainPass)?.let { mainPassword ->
                         settingsStore.saveConnectionPassword(mainPassword)
                         TunnelManager.addDeployInfoLog("Пароль подключения синхронизирован с паролем сервера")
+                    }
+                    settingsStore.saveDeployedServer(host, effectivePeerPort, effectiveWebPort)
+                    if (effectivePeerPort != CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT) {
+                        TunnelManager.addDeployInfoLog("Подключение настроено на порт сервера $effectivePeerPort")
                     }
                     showDeployToast(context, "Установка успешно завершена")
                 } else {
@@ -369,7 +396,8 @@ internal fun DeployTab(
 
     fun startUninstall() {
         if (DeployManager.isDeploying.value) return
-        val ports = resolveServerPorts(savedManualPorts, sshPort, peerPort, webPort)
+        val instance = savedInstance
+        val ports = resolveServerPorts(savedManualPorts, sshPort, peerPort, webPort, instance)
         val effectiveSshPort = ports.ssh
         val effectivePeerPort = ports.peer
         val uninstallPrivateKey = if (savedSshKeysMode) savedSshPrivateKey else ""
@@ -391,6 +419,7 @@ internal fun DeployTab(
                     privateKey = uninstallPrivateKey,
                     keyPassphrase = uninstallKeyPassphrase,
                     certificate = uninstallCertificate,
+                    instance = instance,
                 )
                 if (success) {
                     showDeployToast(context, "Удаление успешно завершено")
@@ -441,9 +470,19 @@ internal fun DeployTab(
                         peerPort = CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT.toString()
                         webPort = CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT.toString()
                         portsEdited = false
+                    } else if (!savedManualPorts && savedInstance == DeployInstance.SIDE) {
+                        // switched on in «Рядом с 2.1.9»: start from the ports that server takes, not the stock ones —
+                        // the stock 46000 is the 2.1.9 server's, and the deploy refuses it
+                        peerPort = savedInstance.defaultPeerPort.toString()
+                        webPort = savedInstance.defaultWebPort.toString()
+                        portsEdited = true
                     }
                     scope.launch { settingsStore.saveManualPortsEnabled(action.enabled) }
                 }
+                is DeployAction.InstanceChanged -> scope.launch {
+                    settingsStore.saveDeployInstance(action.instance.wire)
+                }
+                DeployAction.InstanceInfo -> showInstanceInfoDialog = true
                 is DeployAction.SshKeysModeChanged -> scope.launch {
                     settingsStore.saveSshKeysMode(action.enabled)
                 }
@@ -499,6 +538,7 @@ internal fun DeployTab(
                             sshPort,
                             peerPort,
                             webPort,
+                            savedInstance,
                         ).web
                         val path = if (savedSettings.secretPathUuid.isNotBlank()) {
                             "/${savedSettings.secretPathUuid.trimStart('/')}"
@@ -533,6 +573,7 @@ internal fun DeployTab(
 
     if (showUninstallDialog) {
         UninstallConfirmDialog(
+            instance = savedInstance,
             onDismiss = { showUninstallDialog = false },
             onConfirm = {
                 showUninstallDialog = false
@@ -558,6 +599,9 @@ internal fun DeployTab(
         )
     }
 
+    if (showInstanceInfoDialog) {
+        DeployInstanceInfoDialog(onDismiss = { showInstanceInfoDialog = false })
+    }
     if (showDockerInfoDialog) {
         DockerInstallInfoDialog(onDismiss = { showDockerInfoDialog = false })
     }

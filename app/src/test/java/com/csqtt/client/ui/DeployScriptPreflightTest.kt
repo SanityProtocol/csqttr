@@ -90,7 +90,7 @@ class DeployScriptPreflightTest {
         assertTrue(deploy.contains("ensure_csqtt_directory()"))
         assertTrue(deploy.contains("rm -rf -- \"\$path\" || die \"Не удалось очистить путь CSQTT: \$path\""))
         assertTrue(deploy.contains("ensure_csqtt_directory \"\$CSQTT_CONFIG_DIR\" 700"))
-        assertTrue(deploy.contains("ensure_csqtt_directory /usr/local/lib/csqtt 755"))
+        assertTrue(deploy.contains("ensure_csqtt_directory \"\$CSQTT_LIB_DIR\" 755"))
         assertTrue(deploy.contains("setup_csqtt_environment() {\n    ensure_csqtt_directory \"\$CSQTT_CONFIG_DIR\" 700"))
         assertTrue(deploy.contains("install -m 0600 \"\$UPLOAD_ENV_FILE\" \"\$CSQTT_ENV_FILE\""))
     }
@@ -116,8 +116,10 @@ class DeployScriptPreflightTest {
         assertTrue(deploy.contains("--security-opt seccomp=unconfined"))
         assertTrue(deploy.contains("probe_docker_runtime"))
         assertTrue(deploy.split("--cap-drop ALL").size >= 3)
-        assertTrue(deploy.contains("COPY network-up.sh /usr/local/lib/csqtt/network-up.sh"))
-        assertTrue(deploy.contains("exec /usr/local/bin/csqtt \\\"\$@\\\""))
+        assertTrue(deploy.contains("COPY network-up.sh @IMG_LIB@/network-up.sh"))
+        assertTrue(deploy.contains("exec @IMG_BIN@ \\\"\$@\\\""))
+        assertTrue(deploy.contains("s#@IMG_BIN@#\${CSQTT_IMAGE_BIN}#g; s#@IMG_LIB@#\${CSQTT_IMAGE_LIB_DIR}#g"))
+        assertTrue(deploy.contains("_img_bin=/usr/local/bin/csqtt; _img_lib=/usr/local/lib/csqtt; _img_conf=/etc/csqtt"))
         assertTrue(deploy.contains("write_network_helper \"\$context_dir/network-up.sh\""))
     }
 
@@ -168,16 +170,16 @@ class DeployScriptPreflightTest {
         val deploy = script()
         assertTrue(deploy.contains("remove_csqtt_tun_interface()"))
         assertTrue(deploy.contains("timeout 2 ip link del \"\$CSQTT_IFACE\""))
-        assertTrue(deploy.contains("write_tun_recovery_helper /usr/local/lib/csqtt/tun-recover.sh"))
-        assertTrue(deploy.contains("ExecStartPre=/usr/local/lib/csqtt/tun-recover.sh"))
+        assertTrue(deploy.contains("write_tun_recovery_helper \"\$CSQTT_LIB_DIR/tun-recover.sh\""))
+        assertTrue(deploy.contains("ExecStartPre=\${CSQTT_LIB_DIR}/tun-recover.sh"))
         assertTrue(deploy.contains("release_owned_peer_port()"))
         assertTrue(deploy.contains("csqtt_process_is_owned()"))
         assertTrue(deploy.contains("""UDP/\${'$'}PEER_PORT runtime PID \${'$'}pid; terminating"""))
         assertTrue(deploy.contains("readonly START_STABILITY_SECONDS=\"\${CSQTT_START_STABILITY_SECONDS:-4}\""))
         assertTrue(deploy.contains("StartLimitIntervalSec=60"))
         assertTrue(deploy.contains("RestartSec=3"))
-        assertTrue(deploy.contains("COPY tun-recover.sh /usr/local/lib/csqtt/tun-recover.sh"))
-        assertTrue(deploy.contains("/usr/local/lib/csqtt/tun-recover.sh; exec /usr/local/bin/csqtt"))
+        assertTrue(deploy.contains("COPY tun-recover.sh @IMG_LIB@/tun-recover.sh"))
+        assertTrue(deploy.contains("@IMG_LIB@/tun-recover.sh; exec @IMG_BIN@"))
     }
 
     @Test
@@ -231,7 +233,7 @@ class DeployScriptPreflightTest {
 
         assertTrue(forceStop.contains("kill -KILL \"\$pid\""))
         assertTrue(cleanup.indexOf("force_stop_csqtt_processes") <
-            cleanup.indexOf("rm -f /usr/local/bin/csqtt"))
+            cleanup.indexOf("rm -f \"\$CSQTT_BIN\""))
         assertTrue(cleanup.contains("systemctl daemon-reload || die \"systemctl daemon-reload завершился ошибкой после удаления старого runtime\""))
     }
 
@@ -262,11 +264,13 @@ class DeployScriptPreflightTest {
         assertTrue(deploy.contains("--ip-address \"\$public_ip\""))
         assertTrue(deploy.contains("--force-renewal"))
         assertTrue(deploy.contains("openssl x509 -noout -checkend \"\$LE_RENEW_BEFORE_SECONDS\""))
-        assertTrue(deploy.contains("OnUnitInactiveSec=24h") || deploy.contains("OnUnitInactiveSec=1h"))
+        assertTrue(deploy.contains("OnUnitInactiveSec=\${LE_RENEW_EVERY}"))
+        assertTrue(deploy.contains("_le_before=259200; _le_every=24h"))
         assertTrue(deploy.contains("fw_add_input_tcp \"\$LE_HTTP_PORT\""))
         assertTrue(deploy.contains("web_cert.pem|web_key.pem|letsencrypt-ip.env"))
-        assertTrue(deploy.contains("systemctl kill --kill-who=main --signal USR1 csqtt"))
-        assertTrue(deploy.contains("docker kill --signal USR1 csqtt"))
+        assertTrue(deploy.contains("systemctl kill --kill-who=main --signal USR1 \"\$UNIT_NAME\""))
+        assertTrue(deploy.contains("docker kill --signal USR1 \"\$UNIT_NAME\""))
+        assertTrue(deploy.contains("Environment=CSQTT_UNIT_NAME=\${CSQTT_UNIT}"))
         assertTrue(deploy.contains("issuer=\"\${issuer#issuer=}\""))
         assertTrue(deploy.contains("subject=\"\${subject#subject=}\""))
         assertTrue(deploy.contains("! python3 -c 'import ensurepip'"))

@@ -35,6 +35,17 @@ internal fun sanitizeSshPassword(value: String): String =
 internal fun isSuccessfulDeployResult(exitStatus: Int, output: String): Boolean =
     exitStatus == 0 && output.lineSequence().any { it.trim() == "CSQTT_DEPLOY_OK" }
 
+// deploy.sh ends a finished uninstall with this line; the command used to be fire-and-forget (30 s, result ignored) and
+// the app reported "removed" whatever had happened
+private const val UNINSTALL_TIMEOUT = 120_000L
+
+internal fun isSuccessfulUninstallResult(exitStatus: Int, output: String): Boolean =
+    exitStatus == 0 && output.lineSequence().any { it.trim() == "CSQTT_UNINSTALL_OK" }
+
+internal fun uninstallFailureMessage(output: String): String =
+    deployFailureDetail(output)?.let { "Удаление не завершено. Причина: $it" }
+        ?: "Удаление не завершено; подробности сохранены в errors.log"
+
 private fun deployFailureDetail(output: String): String? =
     output.lineSequence()
         .map(String::trim)
@@ -558,6 +569,7 @@ internal suspend fun performDeploy(
     certificate: String = "",
     installInDocker: Boolean = false,
     secretPath: String = "",
+    instance: DeployInstance = DeployInstance.MAIN,
 ): Boolean = withContext(Dispatchers.IO) {
     var ssh: SshjClient? = null
     var tempDir: File? = null
@@ -633,7 +645,7 @@ internal suspend fun performDeploy(
         val secretEnv = if (secretPath.isNotBlank()) "CSQTT_WEB_SECRET_PATH=${deployEnvironmentValue(secretPath.trim(), false)} " else ""
         val deployEnvironment =
             "env ${secretEnv}CSQTT_PEER_PORT=$peerPort CSQTT_SSH_PORT=$port CSQTT_WEB_PORT=$webPort CSQTT_PUBLIC_IP=${host.trim()} " +
-                "CSQTT_DEPLOY_MODE=${deployMode(installInDocker)}"
+                "CSQTT_DEPLOY_MODE=${deployMode(installInDocker)} CSQTT_INSTANCE=${instance.wire}"
         onProgress(0.10f, "Загрузка нового сервера...")
         sshClient.upload(serverFile, "/tmp/.csqtt-upload-server")
         sshClient.upload(environmentFile, "/tmp/.csqtt-upload-web.env")
@@ -696,6 +708,7 @@ internal suspend fun performUninstall(
     privateKey: String = "",
     keyPassphrase: String = "",
     certificate: String = "",
+    instance: DeployInstance = DeployInstance.MAIN,
 ): Boolean = withContext(Dispatchers.IO) {
     var ssh: SshjClient? = null
     var uninstallScript: File? = null
@@ -722,10 +735,20 @@ internal suspend fun performUninstall(
 
         onProgress(0.30f, "Удаление через deploy.sh...")
         TunnelManager.addDeployInfoLog("Запуск серверного удаления")
-        sshClient.exec(
-            rootCommand("env CSQTT_PEER_PORT=$peerPort CSQTT_SSH_PORT=$port bash /tmp/deploy.sh uninstall", pass),
-            timeout = 30000L,
+        // the instance the form is set to: «Рядом с 2.1.9» removes only the csqtt25 server, «Вместо 2.1.9» the stock one
+        val uninstallResult = sshClient.execResult(
+            rootCommand("env CSQTT_PEER_PORT=$peerPort CSQTT_SSH_PORT=$port CSQTT_INSTANCE=${instance.wire} bash /tmp/deploy.sh uninstall", pass),
+            timeout = UNINSTALL_TIMEOUT,
         )
+        if (!isSuccessfulUninstallResult(uninstallResult.exitStatus, uninstallResult.output)) {
+            DeployManager.writeError(
+                "Uninstall failed: exit=${uninstallResult.exitStatus}\n${uninstallResult.output.takeLast(1200)}"
+            )
+            val failureMessage = uninstallFailureMessage(uninstallResult.output)
+            TunnelManager.addDeployErrorLog(failureMessage)
+            DeployManager.stopDeploy(failureMessage)
+            return@withContext false
+        }
 
         onProgress(1.0f, "Готово!")
         TunnelManager.addDeploySuccessLog("Удаление CSQTT завершено")
