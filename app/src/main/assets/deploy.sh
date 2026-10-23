@@ -1085,15 +1085,10 @@ SYSEOF
     echo "✓ Sysctl настроен (IPv4/IPv6 forwarding + BBR + буферы)"
 }
 
-tune_cpu_mitigations() {
-    if [ -f /etc/default/grub ]; then
-        if ! grep -q "mitigations=off" /etc/default/grub; then
-            sed -i 's/\(GRUB_CMDLINE_LINUX_DEFAULT="[^"]*\)/\1 mitigations=off nowatchdog/' /etc/default/grub 2>/dev/null || true
-            update-grub >>"$LOG_FILE" 2>&1 || grub2-mkconfig -o /boot/grub2/grub.cfg >>"$LOG_FILE" 2>&1 || true
-            log_info "Оптимизация CPU: mitigations=off добавлено в GRUB"
-        fi
-    fi
-}
+# 2.5.0 added "mitigations=off nowatchdog" to the GRUB kernel command line here: it switched the kernel's CPU-vulnerability
+# protections off from the next reboot, uninstall never put them back, and the server does not depend on it (2.1.9 never
+# did it; the gain was never measured). Dropped in 2.5.2 — a VPN install does not decide the host kernel's security.
+# A box that already has the flag keeps it: nothing here edits GRUB.
 
 setup_nat_and_firewall() {
     prog 0.40 "NAT + Firewall..."
@@ -1112,7 +1107,9 @@ setup_nat_and_firewall() {
     sysctl -w "net.ipv6.conf.${iface}.disable_ipv6=0" >>"$LOG_FILE" 2>&1 || true
     sysctl -w "net.ipv6.conf.${iface}.accept_ra=2" >>"$LOG_FILE" 2>&1 || true
     sysctl -w "net.ipv6.conf.${iface}.forwarding=1" >>"$LOG_FILE" 2>&1 || true
-    command -v netplan >/dev/null 2>&1 && netplan apply >>"$LOG_FILE" 2>&1 || true
+    # 2.5.0 ran `netplan apply` here. It re-applies the whole network configuration mid-install (the uplink can drop, and on a
+    # box running other software networkd may remove routes it did not configure), and on a netplan box it undoes the line
+    # above: networkd resets accept_ra on the links it manages. The server is IPv4-only; 2.1.9 never did it. Dropped in 2.5.2.
 
     local gw_ip
     gw_ip="$(ip -4 route show default 2>/dev/null | awk '/default/ {for(i=1;i<=NF;i++) if($i=="via") {print $(i+1); break}}')"
@@ -2762,7 +2759,6 @@ main() {
                 run_timed "Docker" ensure_docker
             fi
             run_timed "sysctl" setup_sysctl
-            run_timed "CPU mitigations" tune_cpu_mitigations
 
             run_timed "проверка upload" prepare_uploaded_release
             if [ "$DEPLOY_MODE" = "docker" ]; then
