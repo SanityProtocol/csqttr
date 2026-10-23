@@ -352,7 +352,8 @@ force_release_peer_port() {
     return 1
 }
 
-# side: a port held by anything but this server is REFUSED, never killed — next to 2.1.9 the holder may be the stock server.
+# A port held by anything but this server is REFUSED, never killed (side: next to 2.1.9 the holder may be the stock server;
+# main: a server swg-panel or someone else runs there, or an unrelated program — the stock script killed whatever it was).
 pid_is_this_csqtt() {
     local pid="$1" container
     csqtt_process_is_owned "$pid" && return 0
@@ -360,13 +361,17 @@ pid_is_this_csqtt() {
     [ -n "$container" ] && docker_container_runs_csqtt "$container"
 }
 
-side_assert_port_free() {
-    local proto="$1" port="$2" label="$3" pid holders="" named
+# A process's name and binary, for a refusal message.
+describe_pid() {
+    printf '%s (PID %s, %s)' "$(cat "/proc/$1/comm" 2>/dev/null || echo '?')" "$1" "$(readlink "/proc/$1/exe" 2>/dev/null || echo '?')"
+}
+
+refuse_foreign_port_holder() {
+    local proto="$1" port="$2" label="$3" pid holders=""
     while IFS= read -r pid; do
         [ -n "$pid" ] || continue
         pid_is_this_csqtt "$pid" && continue
-        named="$(cat "/proc/$pid/comm" 2>/dev/null || echo '?')"
-        holders="${holders:+$holders, }${named} (PID ${pid})"
+        holders="${holders:+$holders, }$(describe_pid "$pid")"
     done < <(ss -H -l"${proto}"np "sport = :${port}" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -un || true)
     if [ -z "$holders" ] && ss -H -l"${proto}"n "sport = :${port}" 2>/dev/null | grep -q . && \
        [ -z "$(ss -H -l"${proto}"np "sport = :${port}" 2>/dev/null | grep -oE 'pid=[0-9]+' || true)" ]; then
@@ -375,11 +380,67 @@ side_assert_port_free() {
     [ -z "$holders" ] || die "${label} ${port} занят: ${holders}. Выберите другой порт («Ручные порты»)" "$EXIT_PREFLIGHT_FAILED"
 }
 
+# PIDs holding the TUN interface $1 open: the kernel names it in the descriptor's fdinfo ("iff:	<name>").
+tun_holder_pids() {
+    local name="$1" fd
+    { find /proc/[0-9]*/fd -lname /dev/net/tun 2>/dev/null || true; } | while IFS= read -r fd; do
+        grep -qxE "iff:[[:space:]]*${name}" "${fd%/fd/*}/fdinfo/${fd##*/}" 2>/dev/null || continue
+        fd="${fd#/proc/}"
+        echo "${fd%%/*}"
+    done | sort -un || true
+}
+
+# Holders of this server's interface that are not this server: the live interface of another server (swg-panel names its
+# first csqtt server csqtt1 too). Empty when the interface is free, or a leftover nobody holds (deleted as before).
+foreign_tun_holders() {
+    local pid holders=""
+    while IFS= read -r pid; do
+        [ -n "$pid" ] || continue
+        pid_is_this_csqtt "$pid" && continue
+        holders="${holders:+$holders, }$(describe_pid "$pid")"
+    done < <(tun_holder_pids "$CSQTT_IFACE")
+    printf '%s' "$holders"
+}
+
+# swg-panel's csqtt servers (units swg-csqtt-<iface>, their settings in the unit's EnvironmentFile) that claim this server's
+# interface or UDP port — a STOPPED one too: the panel starts it again later, and its ExecStartPre deletes the interface first.
+panel_units_claiming() {
+    command -v systemctl >/dev/null 2>&1 || return 0
+    local unit text file v iface listen claims=""
+    while IFS= read -r unit; do
+        case "$unit" in swg-csqtt-?*.service) ;; *) continue ;; esac
+        text="$(systemctl cat "$unit" 2>/dev/null || true)"
+        iface="$(printf '%s\n' "$text" | grep -oE -- '--iface [^ $]+' | tail -n1 | cut -d' ' -f2 || true)"
+        listen="$(printf '%s\n' "$text" | grep -oE -- '--listen [^ $]+' | tail -n1 | cut -d' ' -f2 || true)"
+        while IFS= read -r file; do
+            file="${file#-}"
+            [ -f "$file" ] || continue
+            v="$(sed -n 's/^SWG_IFACE=//p' "$file" | tail -n1 || true)"; [ -z "$v" ] || iface="$v"
+            v="$(sed -n 's/^SWG_LISTEN=//p' "$file" | tail -n1 || true)"; [ -z "$v" ] || listen="$v"
+        done < <(printf '%s\n' "$text" | sed -n 's/^EnvironmentFile=//p' || true)
+        if [ "$iface" = "$CSQTT_IFACE" ] || [ "${listen##*:}" = "$PEER_PORT" ]; then
+            claims="${claims:+$claims, }${unit} (${iface:-?}, ${listen:-?}, $(systemctl is-active "$unit" 2>/dev/null || true))"
+        fi
+    done < <(systemctl list-unit-files 'swg-csqtt-*.service' --no-legend --plain 2>/dev/null | awk '{print $1}' || true)
+    printf '%s' "$claims"
+}
+
+# Both modes replace only what this app installed. Another server on this interface or port is refused before anything is
+# stopped: the stock script deleted its live interface as "leftover" and killed whatever held the port, and the two servers
+# then took the interface from each other at every restart (seen on a VM with swg-panel's csqtt1).
+refuse_anothers_server() {
+    local holders claims
+    claims="$(panel_units_claiming)"
+    [ -z "$claims" ] || die "Интерфейс ${CSQTT_IFACE} или UDP-порт ${PEER_PORT} занят сервером swg-panel: ${claims}. Этот сервер установлен не приложением — обновляйте его в панели" "$EXIT_PREFLIGHT_FAILED"
+    holders="$(foreign_tun_holders)"
+    [ -z "$holders" ] || die "Интерфейс ${CSQTT_IFACE} занят другим сервером: ${holders}. Он установлен не этим приложением — обновляйте его там, откуда он установлен" "$EXIT_PREFLIGHT_FAILED"
+}
+
 assert_peer_port_is_available() {
     local listeners
     listeners="$(peer_port_listeners)"
     [ -z "$listeners" ] && return 0
-    [ "$CSQTT_ROLE" = side ] && side_assert_port_free u "$PEER_PORT" "UDP-порт"
+    [ "$CSQTT_ROLE" = side ] && refuse_foreign_port_holder u "$PEER_PORT" "UDP-порт"
     log_warn "UDP/${PEER_PORT} занят; выполняется принудительное освобождение"
     force_release_peer_port || die "Не удалось принудительно освободить UDP/${PEER_PORT}"
     [ -z "$(peer_port_listeners)" ] || die "UDP/${PEER_PORT} остался занят после принудительной очистки"
@@ -953,6 +1014,12 @@ remove_csqtt_tun_interface() {
     local attempt waited=0
     if ! ip link show "$CSQTT_IFACE" >/dev/null 2>&1; then
         return 0
+    fi
+    local foreign
+    foreign="$(foreign_tun_holders)"
+    if [ -n "$foreign" ]; then
+        log_error "TUN-интерфейс $CSQTT_IFACE держит другой сервер (${foreign}) — не удаляется"
+        return 1
     fi
 
     log_warn "Обнаружен остаточный TUN-интерфейс $CSQTT_IFACE; выполняется восстановление runtime"
@@ -2692,13 +2759,14 @@ side_preflight() {
         esac
     fi
     [ -n "$ver" ] && log_info "Рядом работает csqtt ${ver} (csqtt1) — он не затрагивается"
-    side_assert_port_free u "$PEER_PORT" "UDP-порт"
-    side_assert_port_free t "$WEB_PORT" "TCP-порт WEB-панели"
+    refuse_anothers_server
+    refuse_foreign_port_holder u "$PEER_PORT" "UDP-порт"
+    refuse_foreign_port_holder t "$WEB_PORT" "TCP-порт WEB-панели"
 }
 
-# Main mode takes its ports by force (stock behaviour: whatever holds the peer port is killed). The one holder it must never
-# take them from is the server next to it: after a side deploy the app's profile keeps the side's ports as "manual", so a
-# later «Вместо 2.1.9» from it would otherwise kill csqtt25 and take its port. Refused before anything is stopped.
+# Main mode replaces the stock server (whatever of it holds the ports is stopped, as before) and nothing else: the server
+# next to it (after a side deploy the app's profile keeps the side's ports as "manual", so a later «Вместо 2.1.9» from it
+# would kill csqtt25), another server on csqtt1 or the port, or any other program. All refused before anything is stopped.
 main_preflight() {
     local proto port pid exe
     for proto in u t; do
@@ -2712,6 +2780,9 @@ main_preflight() {
             esac
         done < <(ss -H -l"${proto}"np "sport = :${port}" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -un || true)
     done
+    refuse_anothers_server
+    refuse_foreign_port_holder u "$PEER_PORT" "UDP-порт"
+    refuse_foreign_port_holder t "$WEB_PORT" "TCP-порт WEB-панели"
 }
 
 handle_unexpected_error() {

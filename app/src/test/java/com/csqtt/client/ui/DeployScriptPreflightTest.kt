@@ -298,6 +298,28 @@ class DeployScriptPreflightTest {
     }
 
     @Test
+    fun `both modes refuse another server's interface or port before anything is stopped`() {
+        val deploy = script()
+        fun body(name: String) = deploy.substringAfter("$name() {").substringBefore("\n}\n")
+        for (preflight in listOf("main_preflight", "side_preflight")) {
+            val p = body(preflight)
+            assertTrue(preflight, p.contains("refuse_anothers_server"))
+            assertTrue(preflight, p.contains("refuse_foreign_port_holder u \"\$PEER_PORT\""))
+            assertTrue(preflight, p.contains("refuse_foreign_port_holder t \"\$WEB_PORT\""))
+        }
+        val install = deploy.substringAfter("install|--install|-i)")
+        assertTrue(install.indexOf("main_preflight") in 0 until install.indexOf("csqtt_cleanup"))
+        // a live interface another process holds (its fdinfo names it: "iff:") is never deleted as a leftover
+        val tun = body("tun_holder_pids")
+        assertTrue(tun.contains("-lname /dev/net/tun") && tun.contains("iff:"))
+        val remove = body("remove_csqtt_tun_interface")
+        assertTrue(remove.indexOf("foreign_tun_holders") in 0 until remove.indexOf("ip link del"))
+        // swg-panel's servers are found by their units, a stopped one too (the panel starts it again later)
+        val panel = body("panel_units_claiming")
+        assertTrue(panel.contains("'swg-csqtt-*.service'") && panel.contains("SWG_IFACE=") && panel.contains("SWG_LISTEN="))
+    }
+
+    @Test
     fun `side server names stay out of the stock installer's cleanup reach`() {
         val deploy = script()
         val side = deploy.substringAfter("    side)\n").substringBefore(";;")
