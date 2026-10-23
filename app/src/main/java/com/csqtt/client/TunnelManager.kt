@@ -1961,9 +1961,13 @@ object TunnelManager {
                     ipIsWhitelist = newServerRule.ipIsWhite,
                     directIps = newServerRule.ips.joinToString(","),
                 )
+                // the VPN's excludeRoutes come from ips/ipIsWhite too: a change there alone (App routing from the panel)
+                // left stale routes until a reconnect
                 val vpnInputsChanged = previousRule == null ||
                     previousRule.isWhite != newServerRule.isWhite ||
-                    previousRule.packages.toSet() != newServerRule.packages.toSet()
+                    previousRule.packages.toSet() != newServerRule.packages.toSet() ||
+                    previousRule.ipIsWhite != newServerRule.ipIsWhite ||
+                    previousRule.ips.toSet() != newServerRule.ips.toSet()
                 if (vpnReady.value && vpnInputsChanged) {
                     val reloadIntent = Intent(ctx, TunVpnService::class.java).apply {
                         action = "RELOAD_ROUTING"
