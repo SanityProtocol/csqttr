@@ -139,6 +139,7 @@ class DeployResultPolicyTest {
         assertFalse(isSuccessfulUninstallResult(1, "CSQTT_UNINSTALL_OK"))
         assertFalse(isSuccessfulUninstallResult(0, "CSQTT удалён"))
         assertTrue(uninstallFailureMessage("CSQTT_DEPLOY_ERROR|validation|порт занят").contains("порт занят"))
+        assertTrue(parseDeployOutputLine("CSQTT_UNINSTALL_OK") == null)   // a marker for the app, not a line for the user
     }
 
     @Test(expected = java.io.IOException::class)

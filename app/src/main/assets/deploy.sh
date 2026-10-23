@@ -2673,14 +2673,14 @@ side_preflight() {
     ver="$(main_install_csqtt_version || true)"
     # an existing side server is being UPDATED: allowed whatever runs next to it (a later «Вместо 2.1.9» may have put 2.5 there)
     if csqtt_systemd_unit_exists || csqtt_docker_container_exists; then
-        ver="${ver:+$ver (обновление ${CSQTT_NAME})}"
+        log_info "Обновление ${CSQTT_NAME}"
     else
         case "$ver" in
             ""|0.*|1.*|2.0|2.0.*|2.1|2.1.*) ;;
             *) die "Здесь уже работает csqtt ${ver}. «Рядом с 2.1.9» ставит второй сервер рядом с 2.1.9 — чтобы обновить этот сервер, выберите «Вместо 2.1.9»" "$EXIT_PREFLIGHT_FAILED" ;;
         esac
     fi
-    [ -n "$ver" ] && log_info "Рядом: csqtt ${ver} (csqtt1) не затрагивается"
+    [ -n "$ver" ] && log_info "Рядом работает csqtt ${ver} (csqtt1) — он не затрагивается"
     side_assert_port_free u "$PEER_PORT" "UDP-порт"
     side_assert_port_free t "$WEB_PORT" "TCP-порт WEB-панели"
 }

@@ -124,6 +124,7 @@ internal fun parseDeployOutputLine(rawLine: String): DeployOutputLine? {
             raw.startsWith("CSQTT_PROGRESS|") ||
             raw.startsWith("CSQTT_DEPLOY_ERROR|") ||
             raw == "CSQTT_DEPLOY_OK" ||
+            raw == "CSQTT_UNINSTALL_OK" ||
             raw == "CSQTT_DEPLOY_ROLLED_BACK" ||
             raw == "CSQTT_DEPLOY_ROLLBACK_FAILED"
     ) return null
