@@ -224,7 +224,10 @@ class TunVpnService : VpnService() {
                     } else {
                         val settingsStore = SettingsStore(applicationContext)
                         ipWhite = settingsStore.ipIsWhitelist.first()
-                        ipListStr = if (ipWhite) {
+                        // only with IP routing switched on: saved IPs bypassed the VPN with the switch off
+                        ipListStr = if (!settingsStore.ipRoutingEnabled.first()) {
+                            ""
+                        } else if (ipWhite) {
                             settingsStore.directIpsWhite.first()
                         } else {
                             settingsStore.directIpsBlack.first()
