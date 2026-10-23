@@ -22,7 +22,6 @@ use tokio_util::sync::CancellationToken;
 pub const UDP_FLOW_IDLE: Duration = Duration::from_secs(60);
 #[cfg(target_os = "linux")]
 const SOCKS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
-const TPROXY_BASE_PORT: u16 = 10666;
 const GLOBAL_TCP_SESSION_LIMIT: usize = 384;
 const GLOBAL_UDP_FLOW_LIMIT: usize = 784;
 const EXPANDED_TCP_SESSION_LIMIT: usize = 1_512;
@@ -977,7 +976,7 @@ impl TproxyStats {
 }
 
 pub fn tproxy_port(runtime_id: u64) -> u16 {
-    TPROXY_BASE_PORT + (runtime_id % 50_000) as u16
+    crate::swgpanel::tproxy_base_port() + (runtime_id % 50_000) as u16
 }
 
 #[cfg(target_os = "linux")]

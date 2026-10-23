@@ -535,7 +535,11 @@ fn cookie_tokens(headers: &HeaderMap) -> Vec<String> {
         .filter_map(|v| v.to_str().ok())
         .flat_map(|value| value.split(';'))
         .map(str::trim)
-        .filter_map(|part| part.strip_prefix("csqtt_session=").map(str::to_owned))
+        .filter_map(|part| {
+            part.strip_prefix(crate::swgpanel::session_cookie().as_str())
+                .and_then(|rest| rest.strip_prefix('='))
+                .map(str::to_owned)
+        })
         .collect()
 }
 
@@ -637,8 +641,8 @@ async fn auth_middleware(
     response
 }
 
-fn expired_session_cookie() -> &'static str {
-    "csqtt_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure"
+fn expired_session_cookie() -> String {
+    format!("{}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure", crate::swgpanel::session_cookie())
 }
 
 const STEALTH_ABORT_HEADER: &str = "x-csqtt-stealth-rst";
@@ -878,7 +882,7 @@ async fn login(
             .into_response();
     }
     let cookie =
-        format!("csqtt_session={token}; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax; Secure");
+        format!("{}={token}; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax; Secure", crate::swgpanel::session_cookie());
     let mut response = (StatusCode::OK, [(header::SET_COOKIE, cookie)], "ok").into_response();
     response.headers_mut().insert(
         header::CACHE_CONTROL,
@@ -1579,7 +1583,7 @@ async fn clients_get(
                 vk_hash: entry.vk_hash.clone(),
                 ports: entry.ports.clone(),
                 ip: if entry.ip.is_empty() {
-                    "10.66.67.3".to_string()
+                    crate::swgpanel::subnet_addr(3)
                 } else {
                     entry.ip.clone()
                 },
@@ -1623,7 +1627,7 @@ async fn clients_get(
             active_sessions: count_active_sessions(&state.app.sessions, &db.main_password),
             vk_hash: String::new(),
             ports: String::new(),
-            ip: "10.66.67.2".to_string(),
+            ip: crate::model::owner_tunnel_ip(),
             name: "Владелец".to_string(),
             vk_hashes: if db.main_vk_hashes.is_empty() {
                 db.vk_hashes.clone()
@@ -1703,7 +1707,7 @@ async fn group_clients_get(
                 vk_hash: entry.vk_hash.clone(),
                 ports: entry.ports.clone(),
                 ip: if entry.ip.is_empty() {
-                    "10.66.67.3".to_string()
+                    crate::swgpanel::subnet_addr(3)
                 } else {
                     entry.ip.clone()
                 },
@@ -2070,7 +2074,7 @@ async fn client_get(
             active_sessions,
             vk_hash: String::new(),
             ports: String::new(),
-            ip: "10.66.67.2".to_string(),
+            ip: crate::model::owner_tunnel_ip(),
             name: "Главный пароль".to_string(),
             vk_hashes: if db.main_vk_hashes.is_empty() {
                 db.vk_hashes.clone()
@@ -2106,7 +2110,7 @@ async fn client_get(
             vk_hash: entry.vk_hash.clone(),
             ports: entry.ports.clone(),
             ip: if entry.ip.is_empty() {
-                "10.66.67.3".to_string()
+                crate::swgpanel::subnet_addr(3)
             } else {
                 entry.ip.clone()
             },
@@ -2639,7 +2643,7 @@ async fn api_import_post(
                     } else {
                         c.sub_uuid
                     };
-                    let ip = if c.ip.is_empty() {
+                    let ip = if !model::ip_in_pool(&c.ip) {
                         model::get_next_ip(&db).unwrap_or_default()
                     } else {
                         c.ip
@@ -3622,8 +3626,8 @@ async fn group_admin_data_get(
                 "active": !p_entry.is_deactivated && !model::is_expired(p_entry),
                 "is_deactivated": p_entry.is_deactivated,
                 "active_sessions": count_active_sessions(&state.app.sessions, _pass),
-                "ip": if p_entry.ip.is_empty() { "10.66.67.3" } else { &p_entry.ip },
-                "device_ip": if p_entry.ip.is_empty() { "10.66.67.3" } else { &p_entry.ip },
+                "ip": if p_entry.ip.is_empty() { crate::swgpanel::subnet_addr(3) } else { p_entry.ip.clone() },
+                "device_ip": if p_entry.ip.is_empty() { crate::swgpanel::subnet_addr(3) } else { p_entry.ip.clone() },
                 "group_id": p_entry.group_id,
                 "peer_port": p_entry.wg_port,
                 "vk_hashes": p_entry.vk_hashes,

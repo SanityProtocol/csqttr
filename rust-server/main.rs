@@ -190,6 +190,11 @@ struct Args {
         help = "swg-panel: accepted but inert since 2.5 (no password cap; the address pool bounds it); kept so installed units keep starting"
     )]
     max_passwords: Option<usize>,
+    #[arg(
+        long,
+        help = "this server's name on the host (stock: csqtt) — its systemd unit, netfilter tags, local-proxy table/mark and session cookie; a second server next to a stock one runs as e.g. csqtt25"
+    )]
+    instance: Option<String>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -651,14 +656,15 @@ async fn web_tls_reload_loop(
 fn run_systemctl(action: &str) -> Result<()> {
     if std::env::var("CSQTT_SERVICE_MANAGER").is_ok_and(|value| value == "docker") {
         if action != "restart" {
-            bail!("для управления контейнером используйте docker start/stop csqtt");
+            bail!("для управления контейнером используйте docker start/stop {}", swgpanel::instance());
         }
         #[cfg(unix)]
         {
             let init_exe = std::fs::read_link("/proc/1/exe").ok();
             if init_exe.is_none() || init_exe != std::env::current_exe().ok() {
                 bail!(
-                    "PID 1 контейнера не является этим процессом; выполните docker restart csqtt"
+                    "PID 1 контейнера не является этим процессом; выполните docker restart {}",
+                    swgpanel::instance()
                 );
             }
             if unsafe { libc::kill(1, libc::SIGTERM) } == 0 {
@@ -673,15 +679,17 @@ fn run_systemctl(action: &str) -> Result<()> {
     #[cfg(unix)]
     {
         if unsafe { libc_geteuid() } != 0 {
-            bail!("для управления службой csqtt нужны права root");
+            bail!("для управления службой {} нужны права root", swgpanel::instance());
         }
     }
-    println!("[CLI] Выполняется systemctl {action} csqtt...");
+    // the unit THIS server runs as: a side instance's restart must never restart the stock server next to it
+    let unit = swgpanel::instance();
+    println!("[CLI] Выполняется systemctl {action} {unit}...");
     let mut command = std::process::Command::new("systemctl");
     if action == "restart" {
         command.arg("--no-block");
     }
-    let status = command.args([action, "csqtt"]).status();
+    let status = command.args([action, unit]).status();
     match status {
         Ok(s) if s.success() => {
             println!("[CLI] Готово");
@@ -702,7 +710,7 @@ static PANEL_RESTART_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 pub(crate) fn request_service_restart() -> Result<()> {
     if std::env::var("CSQTT_SERVICE_MANAGER").is_ok_and(|value| value == "systemd") {
         let sequence = PANEL_RESTART_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let unit = format!("csqtt-panel-restart-{}-{sequence}", std::process::id());
+        let unit = format!("{}-panel-restart-{}-{sequence}", swgpanel::instance(), std::process::id());
         let status = std::process::Command::new("systemd-run")
             .arg("--quiet")
             .arg(format!("--unit={unit}"))
@@ -710,7 +718,7 @@ pub(crate) fn request_service_restart() -> Result<()> {
             .arg("--timer-property=AccuracySec=100ms")
             .arg("--collect")
             .arg("/usr/bin/systemctl")
-            .args(["--no-block", "restart", "csqtt"])
+            .args(["--no-block", "restart", swgpanel::instance()])
             .status()
             .context("schedule delayed systemd restart with systemd-run")?;
         if status.success() {
@@ -1046,6 +1054,7 @@ async fn async_main() -> Result<()> {
         args.no_nat,
         args.headless,
         args.desired.clone(),
+        args.instance.clone(),
     )?);
 
     if args.tproxy_child {

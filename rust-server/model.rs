@@ -312,11 +312,17 @@ impl Database {
             } else {
                 key.clone()
             };
-            if entry.ip.is_empty()
-                && let Some(next_ip) = get_next_ip(self)
-            {
-                entry.ip = next_ip;
-                repairs.push(format!("password tag={tag} ip assigned"));
+            if !ip_in_pool(&entry.ip) {
+                let foreign = !entry.ip.is_empty();
+                entry.ip.clear();
+                if let Some(next_ip) = get_next_ip(self) {
+                    entry.ip = next_ip;
+                    repairs.push(if foreign {
+                        format!("password tag={tag} ip outside this server's subnet reassigned")
+                    } else {
+                        format!("password tag={tag} ip assigned")
+                    });
+                }
             }
             if entry.sub_uuid.trim().is_empty() {
                 entry.sub_uuid = random_uuid_v4();
@@ -722,6 +728,16 @@ pub fn is_expired(entry: &PasswordEntry) -> bool {
 // swg-panel: .2 of the instance's --tun-addr /24 (stock: 10.66.67.2).
 pub fn owner_tunnel_ip() -> String {
     crate::swgpanel::subnet_addr(2)
+}
+
+// Is `ip` an address of THIS server's client pool (.3–.250 of its --tun-addr /24)? An address from elsewhere — a 2.1.9
+// export imported into a second server on 10.66.68, a store copied between servers — was handed out as is: the client
+// got TUNCONF 10.66.67.x, the downlink index refused it and the return path led to the other server's TUN.
+pub fn ip_in_pool(ip: &str) -> bool {
+    let Some(o) = crate::tun_device::parse_ipv4(ip) else {
+        return false;
+    };
+    [o[0], o[1], o[2]] == crate::swgpanel::subnet_prefix() && (3..=250).contains(&o[3])
 }
 
 pub fn get_next_ip(db: &Database) -> Option<String> {
@@ -1795,6 +1811,15 @@ fn write_traffic(connection: &mut Connection, traffic: &TrafficSnapshot) -> Resu
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ip_in_pool_is_this_servers_pool_only() {
+        // stock config (no --tun-addr): 10.66.67.3–.250
+        assert!(super::ip_in_pool("10.66.67.3") && super::ip_in_pool("10.66.67.250"));
+        for bad in ["", "10.66.67.1", "10.66.67.2", "10.66.67.251", "10.66.68.3", "fd66:67::3", "junk"] {
+            assert!(!super::ip_in_pool(bad), "{bad}");
+        }
+    }
+
     use super::{
         Database, DatabasePersistence, PasswordEntry, PersistenceQueue, PersistenceUpdate,
         TrafficCounters, TrafficSnapshot, load_database, save_database,

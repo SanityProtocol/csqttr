@@ -1081,7 +1081,6 @@ impl TokioIo {
     }
 }
 
-const MANAGED_RULE_COMMENT: &str = "CSQTT_MANAGED";
 const FIREWALL_REMOVE_PASSES: usize = 4;
 const KERNEL_PARAMETERS: &[(&str, &str)] = &[
     ("/proc/sys/net/ipv4/ip_forward", "1"),
@@ -1136,7 +1135,7 @@ impl FirewallRule {
         let spec = matches
             .iter()
             .copied()
-            .chain(["-m", "comment", "--comment", MANAGED_RULE_COMMENT])
+            .chain(["-m", "comment", "--comment", crate::swgpanel::managed_tag()])
             .chain(target.iter().copied())
             .map(str::to_owned)
             .collect();

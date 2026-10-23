@@ -23,7 +23,18 @@ pub struct InstanceCfg {
                                 // everything via --desired, and the fixed loopback 46003/46004 collide on
                                 // a multi-instance node. Stock false ⇒ unset behaves exactly like upstream.
     pub desired_path: Option<PathBuf>, // declarative desired-passwords file (panel-owned)
+    // instance: the name of this server on the host (stock: csqtt). A second standalone server — the app's "next to
+    // 2.1.9" deploy — runs as e.g. csqtt25 and must never touch the first: it names the systemd unit the CLI and the
+    // web panel's restart act on, the netfilter comments (stock deploy.sh deletes every rule whose comment CONTAINS
+    // CSQTT_MANAGED / CSQTT_TPROXY, so CSQTT25_MANAGED is out of its reach), the local-proxy policy table and fwmark
+    // (stock wipes table 30001 / mark 0x7531 at every start), the TPROXY status sockets and the web session cookie.
+    // One non-default slot: the deploy installs at most one side instance per host.
+    pub instance: String,
+    pub managed_tag: String,    // KernelNetworking rules (stock: CSQTT_MANAGED)
+    pub tproxy_tag: String,     // local-proxy TPROXY rules, ":<port>" appended (stock: CSQTT_TPROXY)
 }
+
+pub const DEFAULT_INSTANCE: &str = "csqtt";
 
 impl Default for InstanceCfg {
     fn default() -> Self {
@@ -35,6 +46,9 @@ impl Default for InstanceCfg {
             no_nat: false,
             headless: false,
             desired_path: None,
+            instance: DEFAULT_INSTANCE.to_owned(),
+            managed_tag: "CSQTT_MANAGED".to_owned(),
+            tproxy_tag: "CSQTT_TPROXY".to_owned(),
         }
     }
 }
@@ -74,6 +88,34 @@ pub fn desired_path() -> Option<&'static PathBuf> {
     get().desired_path.as_ref()
 }
 
+pub fn instance() -> &'static str {
+    &get().instance
+}
+pub fn is_default_instance() -> bool {
+    get().instance == DEFAULT_INSTANCE
+}
+pub fn managed_tag() -> &'static str {
+    &get().managed_tag
+}
+pub fn tproxy_tag() -> &'static str {
+    &get().tproxy_tag
+}
+// Local-proxy policy routing: stock owns table/priority 30001 and fwmark 0x7531 and flushes them at every start; the
+// side instance takes 30002 / 0x7532 (no bit of either mark matches the other's mask) and its own TPROXY port range.
+pub fn tproxy_table() -> &'static str {
+    if is_default_instance() { "30001" } else { "30002" }
+}
+pub fn tproxy_mark() -> &'static str {
+    if is_default_instance() { "0x7531/0x7531" } else { "0x7532/0x7532" }
+}
+pub fn tproxy_base_port() -> u16 {
+    if is_default_instance() { 10666 } else { 10766 }
+}
+// Two panels on one host share its cookies (cookies are not port-scoped): a login to one logged the other out.
+pub fn session_cookie() -> String {
+    if is_default_instance() { "csqtt_session".to_owned() } else { format!("{}_session", get().instance) }
+}
+
 // Under --desired the node runs no IPv6 for csqtt (the TUN carries no v6 address and nothing routes it), so an IPv6
 // uplink packet is dropped like a spoofed IPv4 source — stock passes any non-IPv4 packet unchecked.
 pub fn ipv4_only_uplink() -> bool {
@@ -88,8 +130,26 @@ pub fn build(
     no_nat: bool,
     headless: bool,
     desired: Option<PathBuf>,
+    instance: Option<String>,
 ) -> anyhow::Result<InstanceCfg> {
     let mut cfg = InstanceCfg::default();
+    if let Some(name) = instance
+        && !name.is_empty()
+        && name != DEFAULT_INSTANCE
+    {
+        // a unit name, a path component and a netfilter comment: lower-case letters, digits and '-' only, so the
+        // tag never gains the '_' that would make it a superstring of a stock one ("CSQTT_…")
+        let ok = name.len() <= 15
+            && name.starts_with(|c: char| c.is_ascii_lowercase())
+            && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        if !ok {
+            anyhow::bail!("--instance must be 1-15 of a-z, 0-9 and '-', starting with a letter (got {name})");
+        }
+        let up = name.to_ascii_uppercase();
+        cfg.managed_tag = format!("{up}_MANAGED");
+        cfg.tproxy_tag = format!("{up}_TPROXY");
+        cfg.instance = name;
+    }
     if let Some(i) = iface
         && !i.is_empty()
     {
@@ -127,30 +187,49 @@ mod tests {
 
     #[test]
     fn no_flags_is_stock() {
-        let cfg = build(None, None, false, false, None).unwrap();
+        let cfg = build(None, None, false, false, None, None).unwrap();
         assert_eq!(cfg.iface, "csqtt1");
         assert_eq!(cfg.gw_addr, "10.66.67.1");
         assert_eq!(cfg.subnet_prefix, [10, 66, 67]);
         assert_eq!(cfg.subnet_cidr, "10.66.67.0/24");
         assert!(!cfg.no_nat && !cfg.headless && cfg.desired_path.is_none());
+        assert_eq!(cfg.instance, "csqtt");
+        assert_eq!((cfg.managed_tag.as_str(), cfg.tproxy_tag.as_str()), ("CSQTT_MANAGED", "CSQTT_TPROXY"));
+        // naming the default instance is the same as not naming one
+        let named = build(None, None, false, false, None, Some("csqtt".into())).unwrap();
+        assert_eq!((named.instance.as_str(), named.managed_tag.as_str()), ("csqtt", "CSQTT_MANAGED"));
+    }
+
+    #[test]
+    fn a_side_instance_is_out_of_stock_cleanup_reach() {
+        let cfg = build(Some("csqtt25".into()), Some("10.66.68.1/24".into()), false, false, None, Some("csqtt25".into())).unwrap();
+        assert_eq!(cfg.instance, "csqtt25");
+        assert_eq!((cfg.managed_tag.as_str(), cfg.tproxy_tag.as_str()), ("CSQTT25_MANAGED", "CSQTT25_TPROXY"));
+        // stock deploy.sh deletes every rule whose comment CONTAINS one of these; ours must contain none of them
+        for stock in ["CSQTT_MANAGED", "CSQTT_MIRRORED", "CSQTT_TPROXY", "CSQTT_LOCAL_SOCKS", "CSQTT_SOCKS", "CSQTT_CASCADE_NO_QUIC"] {
+            assert!(!cfg.managed_tag.contains(stock) && !cfg.tproxy_tag.contains(stock), "{stock}");
+        }
+        for bad in ["Csqtt25", "csqtt_25", "25csqtt", "csqtt/25", "a-very-long-instance-name"] {
+            assert!(build(None, None, false, false, None, Some(bad.into())).is_err(), "{bad}");
+        }
     }
 
     #[test]
     fn tun_addr_sets_the_whole_subnet() {
-        let cfg = build(Some("csqtt7".into()), Some("10.66.71.1/24".into()), true, true, None).unwrap();
+        let cfg = build(Some("csqtt7".into()), Some("10.66.71.1/24".into()), true, true, None, None).unwrap();
         assert_eq!(cfg.iface, "csqtt7");
         assert_eq!(cfg.gw_addr, "10.66.71.1");
         assert_eq!(cfg.subnet_prefix, [10, 66, 71]);
         assert_eq!(cfg.subnet_cidr, "10.66.71.0/24");
         assert!(cfg.no_nat && cfg.headless);
         // a bare address means /24
-        assert_eq!(build(None, Some("10.9.8.1".into()), false, false, None).unwrap().subnet_prefix, [10, 9, 8]);
+        assert_eq!(build(None, Some("10.9.8.1".into()), false, false, None, None).unwrap().subnet_prefix, [10, 9, 8]);
     }
 
     #[test]
     fn only_a_24_is_accepted() {
-        assert!(build(None, Some("10.66.71.1/16".into()), false, false, None).is_err());
-        assert!(build(None, Some("10.66.71/24".into()), false, false, None).is_err());
-        assert!(build(None, Some("10.66.300.1/24".into()), false, false, None).is_err());
+        assert!(build(None, Some("10.66.71.1/16".into()), false, false, None, None).is_err());
+        assert!(build(None, Some("10.66.71/24".into()), false, false, None, None).is_err());
+        assert!(build(None, Some("10.66.300.1/24".into()), false, false, None, None).is_err());
     }
 }
