@@ -191,6 +191,14 @@ internal fun resolveServerPorts(
 private fun sidePort(instance: DeployInstance, port: Int?, stockPort: Int): Int? =
     if (instance == DeployInstance.SIDE && port == stockPort) null else port
 
+// Switching the mode with "Ручные порты" on moves the ports still at the old mode's defaults to the new mode's (operator,
+// 2026-10-23); ports the user typed stay. These fields are also the profile's connection port, so the switch moves it too.
+internal fun portsForInstanceSwitch(from: DeployInstance, to: DeployInstance, peerPort: String, webPort: String): Pair<String, String> =
+    Pair(
+        if (peerPort == from.defaultPeerPort.toString()) to.defaultPeerPort.toString() else peerPort,
+        if (webPort == from.defaultWebPort.toString()) to.defaultWebPort.toString() else webPort,
+    )
+
 internal fun DeployUiState.sideReplacesStockPorts(): Boolean =
     instance == DeployInstance.SIDE && manualPorts &&
         (peerPort == CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT.toString() ||
@@ -491,8 +499,16 @@ internal fun DeployTab(
                     }
                     scope.launch { settingsStore.saveManualPortsEnabled(action.enabled) }
                 }
-                is DeployAction.InstanceChanged -> scope.launch {
-                    settingsStore.saveDeployInstance(action.instance.wire)
+                is DeployAction.InstanceChanged -> {
+                    if (savedManualPorts && action.instance != savedInstance) {
+                        val (peer, web) = portsForInstanceSwitch(savedInstance, action.instance, peerPort, webPort)
+                        if (peer != peerPort || web != webPort) {
+                            peerPort = peer
+                            webPort = web
+                            portsEdited = true
+                        }
+                    }
+                    scope.launch { settingsStore.saveDeployInstance(action.instance.wire) }
                 }
                 DeployAction.InstanceInfo -> showInstanceInfoDialog = true
                 is DeployAction.SshKeysModeChanged -> scope.launch {
