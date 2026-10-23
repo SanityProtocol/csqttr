@@ -70,10 +70,12 @@ class DeployScriptPreflightTest {
     fun `activation uses direct runtime paths and has no staged candidate`() {
         val deploy = script()
         assertTrue(deploy.contains("readonly UPLOAD_BINARY=\"/tmp/.csqtt-upload-server\""))
-        assertTrue(deploy.contains("install -m 0755 \"\$UPLOAD_BINARY\" /usr/local/bin/csqtt"))
+        assertTrue(deploy.contains("install -m 0755 \"\$UPLOAD_BINARY\" \"\$CSQTT_BIN\""))
         assertTrue(deploy.contains("install -m 0600 \"\$UPLOAD_ENV_FILE\" \"\$CSQTT_ENV_FILE\""))
-        assertTrue(deploy.contains("rm -f /usr/local/bin/csqtt"))
-        assertTrue(deploy.contains("rm -rf /usr/local/lib/csqtt"))
+        assertTrue(deploy.contains("rm -f \"\$CSQTT_BIN\""))
+        assertTrue(deploy.contains("rm -rf \"\$CSQTT_LIB_DIR\""))
+        // «Вместо 2.1.9» keeps the stock layout
+        assertTrue(deploy.contains("_bin=/usr/local/bin/csqtt; _lib=/usr/local/lib/csqtt; _conf=/etc/csqtt"))
         assertTrue(deploy.contains("clear_runtime_config_preserving_database()"))
         assertFalse(deploy.contains("csqtt.next.XXXXXX"))
         assertFalse(deploy.contains("csqtt-stage"))
@@ -289,5 +291,28 @@ class DeployScriptPreflightTest {
         assertTrue(deploy.contains("rm -f -- \"\$CSQTT_LE_STATE_FILE\""))
         assertTrue(deploy.contains("disable_letsencrypt_renewal_timer"))
         assertTrue(deploy.contains("CSQTT не изменяет его и отключает собственное продление"))
+    }
+
+    @Test
+    fun `side server names stay out of the stock installer's cleanup reach`() {
+        val deploy = script()
+        val side = deploy.substringAfter("    side)\n").substringBefore(";;")
+        fun value(key: String) = Regex("""_$key=([^;\s]+)""").find(side)!!.groupValues[1]
+        // a stock 2.1.9 deploy.sh stops and deletes any unit whose text matches /usr/local/bin/csqtt or /usr/local/lib/csqtt/
+        for (key in listOf("bin", "lib", "img_bin", "img_lib", "le_helper", "le_venv")) {
+            val path = value(key)
+            assertFalse(path, path.contains("/usr/local/bin/csqtt") || "$path/".contains("/usr/local/lib/csqtt/"))
+        }
+        // …containers whose mounts contain :/etc/csqtt, and rules whose comment contains a stock marker
+        assertFalse(value("img_conf").startsWith("/etc/csqtt"))
+        val tag = value("tag")
+        for (stock in listOf("CSQTT_MANAGED", "CSQTT_MIRRORED", "CSQTT_TPROXY", "CSQTT_LOCAL_SOCKS", "CSQTT_SOCKS", "CSQTT_CASCADE_NO_QUIC")) {
+            assertFalse(stock, tag.contains(stock))
+        }
+        assertTrue(value("bin").contains("csqtt")) // swg-panel's adoption scan finds a csqtt server by its path
+        // the side server is a separate instance on the server's command line, in both run modes
+        assertTrue(deploy.contains("CSQTT_INSTANCE_ARGS=(--instance \"\$CSQTT_NAME\" --iface \"\$CSQTT_IFACE\" --tun-addr \"\${CSQTT_GATEWAY}/24\")"))
+        assertTrue(deploy.contains("--config-dir \"\$CSQTT_IMAGE_CONFIG_DIR\" \"\${CSQTT_INSTANCE_ARGS[@]}\""))
+        assertTrue(deploy.contains("ExecStart=\${CSQTT_BIN} --listen"))
     }
 }
