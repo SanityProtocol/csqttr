@@ -214,11 +214,13 @@ impl ClientRoute {
         let elapsed = now
             .saturating_duration_since(self.last_update[idx])
             .as_secs_f64();
+        // The clock moves only with a credit, as the client's bucket does: moving it on every call lost every interval
+        // under 100 µs, so a stream fed faster than that never refilled.
         if elapsed >= 0.0001 {
             self.tokens[idx] =
                 (self.tokens[idx] + elapsed * TB_RATE_BYTES_PER_SEC).min(TB_CAPACITY_BYTES);
+            self.last_update[idx] = now;
         }
-        self.last_update[idx] = now;
     }
 
     fn evict_flows(&mut self, now: std::time::Instant) {
@@ -502,6 +504,26 @@ mod tests {
 
     fn ip(last: u8) -> [u8; 4] {
         [10, 66, 67, last]
+    }
+
+    #[test]
+    fn refill_accumulates_intervals_under_100_microseconds() {
+        let t0 = std::time::Instant::now();
+        let mut route = ClientRoute {
+            tokens: vec![0.0],
+            last_update: vec![t0],
+            ..Default::default()
+        };
+        // a packet every 50 µs for 1 ms: each interval alone is under the 100 µs step
+        for i in 1..=20u64 {
+            route.refill(0, t0 + std::time::Duration::from_micros(50 * i));
+        }
+        let expected = 0.001 * TB_RATE_BYTES_PER_SEC; // 247 bytes
+        assert!(
+            (route.tokens[0] - expected).abs() < 1.0,
+            "1 ms of 50 µs steps credits {} bytes, expected {expected}",
+            route.tokens[0]
+        );
     }
 
     #[test]
