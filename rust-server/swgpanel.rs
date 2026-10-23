@@ -35,6 +35,9 @@ pub struct InstanceCfg {
 }
 
 pub const DEFAULT_INSTANCE: &str = "csqtt";
+// Every netfilter comment stock csqtt (and its deploy.sh) deletes by substring.
+const STOCK_TAGS: [&str; 6] =
+    ["CSQTT_MANAGED", "CSQTT_MIRRORED", "CSQTT_TPROXY", "CSQTT_LOCAL_SOCKS", "CSQTT_SOCKS", "CSQTT_CASCADE_NO_QUIC"];
 
 impl Default for InstanceCfg {
     fn default() -> Self {
@@ -101,7 +104,9 @@ pub fn tproxy_tag() -> &'static str {
     &get().tproxy_tag
 }
 // Local-proxy policy routing: stock owns table/priority 30001 and fwmark 0x7531 and flushes them at every start; the
-// side instance takes 30002 / 0x7532 (no bit of either mark matches the other's mask) and its own TPROXY port range.
+// side instance takes 30002 / 0x7532. The marks share bits (0x7530), but neither value matches the other's mask
+// (0x7531 & 0x7532 = 0x7530 ≠ 0x7532, and the reverse), so each rule sees only its own. Its TPROXY ports start at 10766;
+// they can still meet stock's 10666+id range, which the listener's EADDRINUSE retry already handles.
 pub fn tproxy_table() -> &'static str {
     if is_default_instance() { "30001" } else { "30002" }
 }
@@ -148,6 +153,12 @@ pub fn build(
         let up = name.to_ascii_uppercase();
         cfg.managed_tag = format!("{up}_MANAGED");
         cfg.tproxy_tag = format!("{up}_TPROXY");
+        // …and a name ending in "csqtt" (old-csqtt → OLD-CSQTT_MANAGED) still contains a stock tag
+        for tag in [&cfg.managed_tag, &cfg.tproxy_tag] {
+            if let Some(stock) = STOCK_TAGS.iter().find(|stock| tag.contains(*stock)) {
+                anyhow::bail!("--instance {name}: its rule tag {tag} contains the stock {stock}, which stock csqtt deletes");
+            }
+        }
         cfg.instance = name;
     }
     if let Some(i) = iface
@@ -209,7 +220,7 @@ mod tests {
         for stock in ["CSQTT_MANAGED", "CSQTT_MIRRORED", "CSQTT_TPROXY", "CSQTT_LOCAL_SOCKS", "CSQTT_SOCKS", "CSQTT_CASCADE_NO_QUIC"] {
             assert!(!cfg.managed_tag.contains(stock) && !cfg.tproxy_tag.contains(stock), "{stock}");
         }
-        for bad in ["Csqtt25", "csqtt_25", "25csqtt", "csqtt/25", "a-very-long-instance-name"] {
+        for bad in ["Csqtt25", "csqtt_25", "25csqtt", "csqtt/25", "a-very-long-instance-name", "old-csqtt", "xcsqtt"] {
             assert!(build(None, None, false, false, None, Some(bad.into())).is_err(), "{bad}");
         }
     }

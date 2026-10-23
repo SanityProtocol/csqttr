@@ -1008,6 +1008,16 @@ async fn async_main() -> Result<()> {
         let cmd = args_vec[1].as_str();
         match cmd {
             "start" | "stop" | "restart" => {
+                // The short form names no instance, so it is the stock server's: only a binary installed as `csqtt`
+                // takes it. A second server's binary (csqtt25) running `systemctl restart csqtt` would restart the
+                // stock server next to it.
+                let exe = std::path::Path::new(&args_vec[0])
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default();
+                if exe != swgpanel::DEFAULT_INSTANCE {
+                    bail!("укажите сервер: {exe} --instance <имя> --{cmd}");
+                }
                 return run_systemctl(cmd);
             }
             "dpi" => {
@@ -1028,6 +1038,18 @@ async fn async_main() -> Result<()> {
         return Ok(());
     }
 
+    // swg-panel: lock in the per-instance config (instance/iface/subnet/desired) before anything reads it — the
+    // --start/--stop/--restart below act on this instance's unit, so it must be known before them.
+    let _ = args.max_passwords;
+    swgpanel::init(swgpanel::build(
+        args.iface.clone(),
+        args.tun_addr.clone(),
+        args.no_nat,
+        args.headless,
+        args.desired.clone(),
+        args.instance.clone(),
+    )?);
+
     if args.start {
         return run_systemctl("start");
     }
@@ -1045,17 +1067,6 @@ async fn async_main() -> Result<()> {
     if unsafe { libc_geteuid() } != 0 {
         bail!("csqtt-server must run as root");
     }
-
-    // swg-panel: lock in the per-instance config (iface/subnet/desired) before anything reads it.
-    let _ = args.max_passwords;
-    swgpanel::init(swgpanel::build(
-        args.iface.clone(),
-        args.tun_addr.clone(),
-        args.no_nat,
-        args.headless,
-        args.desired.clone(),
-        args.instance.clone(),
-    )?);
 
     if args.tproxy_child {
         let tproxy_status = args.tproxy_status.clone();

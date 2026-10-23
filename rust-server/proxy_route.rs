@@ -508,7 +508,9 @@ pub(crate) fn socks_udp_response(packet: &[u8]) -> Result<(SocketAddr, &[u8])> {
 
 async fn activate_tproxy(runtime_id: u64, port: u16) -> Result<()> {
     let _guard = POLICY_LOCK.lock().await;
-    cleanup_legacy_proxy_policy().await;
+    if crate::swgpanel::is_default_instance() {
+        cleanup_legacy_proxy_policy().await; // stock's legacy 1066/0x422 — not a side instance's to touch (see startup)
+    }
     let _ = command_output("sysctl", &["-w", "net.ipv4.ip_forward=1"]).await;
     let _ = command_output("sysctl", &["-w", "net.ipv4.conf.all.rp_filter=2"]).await;
     let _ = command_output("sysctl", &["-w", "net.ipv4.conf.default.rp_filter=2"]).await;
