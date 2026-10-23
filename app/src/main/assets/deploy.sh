@@ -29,8 +29,8 @@ case "$CSQTT_ROLE" in
         _peer=46100; _web=46102
         # Let's Encrypt: one lineage per IP, shared with the stock server. 2.1.9 renews at < 24 h on a 6 h timer and 2.5 at
         # < 3 days, so while one of them runs it always renews first and this one only copies live/ (renew helper); alone on
-        # the box it renews itself at < 18 h. Own certbot venv: 2.1.9's uninstall deletes /opt/csqtt-certbot.
-        _le_helper=/usr/local/lib/csqtt25/letsencrypt-renew.sh; _le_venv=/opt/csqtt25-certbot; _le_before=64800; _le_every=6h
+        # the box it renews itself at < 12 h — 6 h below 2.1.9's 24 h, one of its 6 h timer periods. Own certbot venv: 2.1.9's uninstall deletes /opt/csqtt-certbot.
+        _le_helper=/usr/local/lib/csqtt25/letsencrypt-renew.sh; _le_venv=/opt/csqtt25-certbot; _le_before=43200; _le_every=6h
         ;;
     *)
         printf 'CSQTT_DEPLOY_ERROR|validation|CSQTT_INSTANCE должен быть main или side, получено: %s\n' "$CSQTT_ROLE"
@@ -1372,7 +1372,7 @@ setup_csqtt_binary() {
     prog 0.60 "Бинарник..."
     echo "Установка csqtt..."
 
-    install -d -m 0755 "$(dirname "$CSQTT_BIN")"
+    mkdir -p "$(dirname "$CSQTT_BIN")"     # never re-chmod an existing /usr/local/bin (Debian: 2775 root:staff)
     install -m 0755 "$UPLOAD_BINARY" "$CSQTT_BIN" || \
         die "Не удалось установить новый бинарник csqtt"
     echo "✓ csqtt установлен: $CSQTT_BIN"
@@ -2578,12 +2578,23 @@ start_csqtt() {
     echo ""
 }
 
+# Is anything of THIS instance installed? The uninstall used to report success on a box without it — «Удалить» in
+# «Рядом с 2.1.9» on a box that has only the stock server said "removed" and removed nothing.
+csqtt_instance_installed() {
+    [ -e "$CSQTT_BIN" ] || [ -d "$CSQTT_LIB_DIR" ] || csqtt_systemd_unit_exists || csqtt_docker_container_exists || \
+        ip link show "$CSQTT_IFACE" >/dev/null 2>&1 || [ -e "/etc/systemd/system/${CSQTT_LE_TIMER}" ]
+}
+
 do_uninstall() {
     log_step "Удаление CSQTT..."
+    csqtt_instance_installed || die "Сервер ${CSQTT_NAME} на этом VPS не установлен — удалять нечего"
 
     remove_all_csqtt_docker_containers
     if command -v docker >/dev/null 2>&1; then
-        timeout 5 docker image rm "$CSQTT_DOCKER_IMAGE" >/dev/null 2>&1 || true
+        # every tag of this instance's image, not only this version's (a 2.5.0 image stayed behind a 2.5.2 upgrade)
+        docker images --format '{{.Repository}}:{{.Tag}}' "$CSQTT_NAME" 2>/dev/null | while IFS= read -r image; do
+            timeout 5 docker image rm "$image" >/dev/null 2>&1 || true
+        done || true
     fi
 
     if command -v systemctl >/dev/null 2>&1; then

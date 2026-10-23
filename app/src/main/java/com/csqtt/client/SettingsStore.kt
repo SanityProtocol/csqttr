@@ -965,9 +965,9 @@ class SettingsStore(context: Context) {
     // ones (the «Рядом с 2.1.9» server's 46100/46102) turns "Ручные порты" on with them — the connection dials
     // serverPeerPort only then, and 46000 is the stock server's — and an empty server address becomes the host.
     // Nothing changes before a deploy succeeds.
-    suspend fun saveDeployedServer(host: String, peerPort: Int, webPort: Int) {
+    suspend fun saveDeployedServer(profile: Int, host: String, peerPort: Int, webPort: Int) {
         dataStore.edit { prefs ->
-            val profile = prefs[ACTIVE_PROFILE] ?: 0
+            // the profile that started the deploy, even if another is active by the time it finished
             if ((prefs[getProfileKey(PEER, profile)] ?: "").isBlank() && host.isNotBlank()) {
                 prefs[getProfileKey(PEER, profile)] = host
             }

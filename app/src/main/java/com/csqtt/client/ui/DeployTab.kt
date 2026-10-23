@@ -111,7 +111,9 @@ internal data class DeployUiState(
     val panelDisplayUrl: String
         get() {
             val h = host.ifBlank { "IP" }
-            val p = resolveServerPorts(manualPorts, sshPort, peerPort, webPort, instance).web
+            // the panel of the server this profile points at (a side deploy stores its ports on success), not where the
+            // next deploy would go
+            val p = resolveServerPorts(manualPorts, sshPort, peerPort, webPort).web
             val u = if (secretPathUuid.isNotBlank()) {
                 if (secretPathUuid.startsWith("/")) secretPathUuid else "/$secretPathUuid"
             } else {
@@ -343,6 +345,7 @@ internal fun DeployTab(
         if (DeployManager.isDeploying.value) return
         if (!state.canInstall || !isDeployMainPasswordValid(savedMainPass)) return
         val instance = savedInstance
+        val deployProfile = savedSettings.profile
         val ports = resolveServerPorts(savedManualPorts, sshPort, peerPort, webPort, instance)
         val effectiveSshPort = ports.ssh
         val effectivePeerPort = ports.peer
@@ -355,7 +358,15 @@ internal fun DeployTab(
         scope.launch {
             settingsStore.saveDeploy(host)
             settingsStore.saveDeploySecrets(effectiveMainPass, sshLogin, sshPassword, savedWebLogin, savedWebPassword)
-            settingsStore.savePorts(effectivePeerPort, effectiveWebPort, effectiveSshPort.toString())
+            // the ports as the form holds them (they are the profile's connection port): the effective side ports are
+            // written by saveDeployedServer only once the deploy succeeded
+            if (savedManualPorts) {
+                settingsStore.savePorts(
+                    peerPort.toIntOrNull()?.takeIf { it in 1..65535 } ?: effectivePeerPort,
+                    webPort.toIntOrNull()?.takeIf { it in 1..65535 } ?: effectiveWebPort,
+                    effectiveSshPort.toString(),
+                )
+            }
         }
         DeployManager.startDeploy()
         DeployManager.scope.launch {
@@ -385,7 +396,7 @@ internal fun DeployTab(
                         settingsStore.saveConnectionPassword(mainPassword)
                         TunnelManager.addDeployInfoLog("Пароль подключения синхронизирован с паролем сервера")
                     }
-                    settingsStore.saveDeployedServer(host, effectivePeerPort, effectiveWebPort)
+                    settingsStore.saveDeployedServer(deployProfile, host, effectivePeerPort, effectiveWebPort)
                     if (effectivePeerPort != CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT) {
                         TunnelManager.addDeployInfoLog("Подключение настроено на порт сервера $effectivePeerPort")
                     }
@@ -490,12 +501,6 @@ internal fun DeployTab(
                         peerPort = CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT.toString()
                         webPort = CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT.toString()
                         portsEdited = false
-                    } else if (!savedManualPorts && savedInstance == DeployInstance.SIDE) {
-                        // switched on in «Рядом с 2.1.9»: start from the ports that server takes, not the stock ones —
-                        // the stock 46000 is the 2.1.9 server's, and the deploy refuses it
-                        peerPort = savedInstance.defaultPeerPort.toString()
-                        webPort = savedInstance.defaultWebPort.toString()
-                        portsEdited = true
                     }
                     scope.launch { settingsStore.saveManualPortsEnabled(action.enabled) }
                 }
@@ -566,7 +571,6 @@ internal fun DeployTab(
                             sshPort,
                             peerPort,
                             webPort,
-                            savedInstance,
                         ).web
                         val path = if (savedSettings.secretPathUuid.isNotBlank()) {
                             "/${savedSettings.secretPathUuid.trimStart('/')}"

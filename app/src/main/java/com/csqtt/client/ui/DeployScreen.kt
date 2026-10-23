@@ -362,7 +362,9 @@ private fun ManualPortFields(
         }
         if (state.sideReplacesStockPorts()) {
             Text(
-                text = "46000 и 46002 заняты сервером 2.1.9 — второй сервер встанет на ${state.instance.defaultPeerPort} и ${state.instance.defaultWebPort}",
+                text = resolveServerPorts(state.manualPorts, state.sshPort, state.peerPort, state.webPort, state.instance).let {
+                "Стандартные порты занимает сервер 2.1.9 — второй сервер встанет на ${it.peer} и ${it.web}"
+            },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = CsqttSpacing.Xs),
