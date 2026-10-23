@@ -740,6 +740,17 @@ pub fn ip_in_pool(ip: &str) -> bool {
     [o[0], o[1], o[2]] == crate::swgpanel::subnet_prefix() && (3..=250).contains(&o[3])
 }
 
+// The address an IMPORTED client gets: its own only when it is in this server's pool and no client already has it —
+// an export merged into a server with clients (or two clients of one export on one address) gave two clients one
+// tunnel address, and each broke the other's traffic. Clients are inserted one by one, so earlier ones in the same
+// import count as taken.
+pub fn import_ip(db: &Database, ip: &str) -> String {
+    if ip_in_pool(ip) && !db.passwords.values().any(|entry| entry.ip == ip) {
+        return ip.to_owned();
+    }
+    get_next_ip(db).unwrap_or_default()
+}
+
 pub fn get_next_ip(db: &Database) -> Option<String> {
     let mut buf = String::with_capacity(16);
     for i in 3..=250u8 {
@@ -1811,6 +1822,21 @@ fn write_traffic(connection: &mut Connection, traffic: &TrafficSnapshot) -> Resu
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn import_never_hands_out_a_taken_address() {
+        let mut db = Database::default();
+        let entry = |ip: &str| PasswordEntry { ip: ip.to_owned(), ..Default::default() };
+        db.passwords.insert("existing".into(), entry("10.66.67.3"));
+        // a free in-pool address is kept
+        assert_eq!(super::import_ip(&db, "10.66.67.40"), "10.66.67.40");
+        // a taken one, or one from another subnet, gets the next free address
+        assert_eq!(super::import_ip(&db, "10.66.67.3"), "10.66.67.4");
+        assert_eq!(super::import_ip(&db, "10.66.68.9"), "10.66.67.4");
+        // an earlier client of the same import counts as taken
+        db.passwords.insert("imported-1".into(), entry("10.66.67.4"));
+        assert_eq!(super::import_ip(&db, "10.66.67.4"), "10.66.67.5");
+    }
+
     #[test]
     fn ip_in_pool_is_this_servers_pool_only() {
         // stock config (no --tun-addr): 10.66.67.3–.250

@@ -2643,11 +2643,7 @@ async fn api_import_post(
                     } else {
                         c.sub_uuid
                     };
-                    let ip = if !model::ip_in_pool(&c.ip) {
-                        model::get_next_ip(&db).unwrap_or_default()
-                    } else {
-                        c.ip
-                    };
+                    let ip = model::import_ip(&db, &c.ip);
                     let client_name = if c.name.trim().is_empty()
                         || model::is_client_name_taken(
                             model::existing_client_names_in_scope(&db, &c.group_id, None),
