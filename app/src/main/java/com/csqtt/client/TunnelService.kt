@@ -47,7 +47,9 @@ private const val TUNNEL_NOTIFICATION_ID = CsqttConstants.Notifications.TUNNEL_N
 private const val NOTIFICATION_MIN_REBUILD_INTERVAL_MS = 5_000L
 private const val NETWORK_SWAP_SETTLE_MS = 4_000L
 private const val NETWORK_LOSS_GRACE_MS = 2_000L
-private const val AUTO_PAUSE_WIFI_RECONCILE_MS = 1_000L
+// Network callbacks drive the Wi-Fi auto-pause; this poll is only a safety net. The pause now lasts as long as the
+// phone stays on Wi-Fi (hours), so a 1 s poll woke the app every second for all of it.
+private const val AUTO_PAUSE_WIFI_RECONCILE_MS = 15_000L
 private const val WAKE_LOCK_TIMEOUT_MS = 10 * 60 * 1_000L
 private const val WAKE_LOCK_RENEWAL_WINDOW_MS = 60 * 1_000L
 private const val VK_PROBE_CONNECT_TIMEOUT_MS = 3_000
@@ -1273,7 +1275,10 @@ class TunnelService : Service() {
                     stopTunnel()
                     break
                 }
-                updateNotification(currentNotificationText())
+                // The traffic numbers in the notification are read only with the screen on: redrawing it with the
+                // screen off costs a notification post every few seconds for nothing. The next tick after the screen
+                // comes on brings it up to date.
+                if (screenInteractive()) updateNotification(currentNotificationText())
                 delay(2000)
             }
         }
@@ -1380,6 +1385,9 @@ class TunnelService : Service() {
             startPersistentForeground(notification)
         }
     }
+
+    private fun screenInteractive(): Boolean =
+        runCatching { (getSystemService(POWER_SERVICE) as PowerManager).isInteractive }.getOrDefault(true)
 
     private fun isNotificationVisible(): Boolean {
         return runCatching {
