@@ -316,7 +316,50 @@ class DeployScriptPreflightTest {
         assertTrue(remove.indexOf("foreign_tun_holders") in 0 until remove.indexOf("ip link del"))
         // swg-panel's servers are found by their units, a stopped one too (the panel starts it again later)
         val panel = body("panel_units_claiming")
-        assertTrue(panel.contains("'swg-csqtt-*.service'") && panel.contains("SWG_IFACE=") && panel.contains("SWG_LISTEN="))
+        assertTrue(panel.contains("'swg-csqtt-*.service'") && panel.contains("panel_unit_settings"))
+        val settings = body("panel_unit_settings")
+        assertTrue(settings.contains("SWG_IFACE=") && settings.contains("SWG_LISTEN="))
+    }
+
+    @Test
+    fun `the server check reads only and runs before the installer prints or logs anything`() {
+        val deploy = script()
+        fun body(name: String) = deploy.substringAfter("$name() {").substringBefore("\n}\n")
+        // the last main(): deploy.sh writes a helper script with its own main() further up
+        val main = deploy.substringAfterLast("\nmain() {").substringBefore("\n}\n")
+        val check = main.indexOf("= inventory ]")
+        assertTrue(check >= 0)
+        assertTrue(check < main.indexOf("echo \"╔") && check < main.indexOf("\$LOG_FILE"))
+        val readers = listOf("do_inventory", "inv_place", "main_place_strangers", "server_ports_in", "pid_in_cgroups", "panel_unit_settings")
+        for (name in readers) {
+            val b = body(name)
+            for (write in listOf("mkdir", "rm ", ">>", "tee ", "systemctl stop", "systemctl disable", "docker stop", "docker rm", "kill ", "ip link del", "iptables")) {
+                assertFalse("$name: $write", b.contains(write))
+            }
+        }
+        assertTrue(body("do_inventory").trimEnd().endsWith("inv_line end"))
+    }
+
+    @Test
+    fun `the standard place refuses a server it did not install instead of wiping it`() {
+        val deploy = script()
+        fun body(name: String) = deploy.substringAfter("$name() {").substringBefore("\n}\n")
+        // main mode's cleanup stops, kills and deletes every csqtt unit, container and process it matches: anything of
+        // that kind that is not the standard place's own is refused before it runs
+        val preflight = body("main_preflight")
+        assertTrue(preflight.contains("main_place_strangers"))
+        val install = deploy.substringAfter("install|--install|-i)")
+        assertTrue(install.indexOf("main_preflight") in 0 until install.indexOf("csqtt_cleanup"))
+        // 2.1.9's cascade helper (/usr/local/bin/csqtt-cascade) matches the stock pattern but is the standard place's own
+        val units = Regex("STANDARD_PLACE_UNITS=\"([^\"]+)\"").find(deploy)!!.groupValues[1].split(" ")
+        for (unit in listOf("csqtt.service", "csqtt-cascade.service", "csqtt-letsencrypt.service", "csqtt-docker-prereq.service")) {
+            assertTrue(unit, unit in units)
+        }
+        val strangers = body("main_place_strangers")
+        assertTrue(strangers.contains("list_csqtt_systemd_units") && strangers.contains("docker_container_runs_csqtt") &&
+            strangers.contains("all_csqtt_process_pids"))
+        // what the user reads no longer names a version for a mode
+        assertFalse(deploy.contains("«Рядом с 2.1.9»") || deploy.contains("«Вместо 2.1.9»"))
     }
 
     @Test

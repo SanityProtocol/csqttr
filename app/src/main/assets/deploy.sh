@@ -7,8 +7,9 @@ export TERM="${TERM:-xterm}"
 
 readonly SCRIPT_VERSION="2.5.2"
 
-# Which server this run installs. main = «Вместо 2.1.9»: the stock layout (csqtt1, /etc/csqtt, csqtt.service) — it replaces
-# whatever runs there. side = «Рядом с 2.1.9»: a second, independent server (csqtt25) next to a stock one. A stock 2.1.9
+# Which server this run installs (the app picks it after `inventory`). main = the standard place: the stock layout (csqtt1,
+# /etc/csqtt, csqtt.service) — install, update, or replace what runs there. side = a second, independent server (csqtt25)
+# next to an older stock one. A stock 2.1.9
 # deploy.sh finds "any csqtt" by SUBSTRINGS (unit text matching /usr/local/bin/csqtt or /usr/local/lib/csqtt/, rule comments
 # containing CSQTT_MANAGED, containers mounting :/etc/csqtt or running /usr/local/bin/csqtt, …) and destroys what it finds on
 # every redeploy/uninstall — so every side name below is out of reach of those patterns, and this script's own matchers
@@ -95,7 +96,7 @@ readonly EXIT_CUTOVER_FAILED=30
 # adoption scan reads the process's command line). None in main mode: its unit stays the stock one.
 if [ "$CSQTT_ROLE" = side ]; then
     CSQTT_INSTANCE_ARGS=(--instance "$CSQTT_NAME" --iface "$CSQTT_IFACE" --tun-addr "${CSQTT_GATEWAY}/24")
-    CSQTT_ROLE_LABEL=" (рядом с 2.1.9: ${CSQTT_NAME})"
+    CSQTT_ROLE_LABEL=" (второй сервер: ${CSQTT_NAME})"
 else
     CSQTT_INSTANCE_ARGS=()
     CSQTT_ROLE_LABEL=""
@@ -406,23 +407,31 @@ foreign_tun_holders() {
 # interface or UDP port — a STOPPED one too: the panel starts it again later, and its ExecStartPre deletes the interface first.
 panel_units_claiming() {
     command -v systemctl >/dev/null 2>&1 || return 0
-    local unit text file v iface listen claims=""
+    local unit iface listen claims=""
     while IFS= read -r unit; do
         case "$unit" in swg-csqtt-?*.service) ;; *) continue ;; esac
-        text="$(systemctl cat "$unit" 2>/dev/null || true)"
-        iface="$(printf '%s\n' "$text" | grep -oE -- '--iface [^ $]+' | tail -n1 | cut -d' ' -f2 || true)"
-        listen="$(printf '%s\n' "$text" | grep -oE -- '--listen [^ $]+' | tail -n1 | cut -d' ' -f2 || true)"
-        while IFS= read -r file; do
-            file="${file#-}"
-            [ -f "$file" ] || continue
-            v="$(sed -n 's/^SWG_IFACE=//p' "$file" | tail -n1 || true)"; [ -z "$v" ] || iface="$v"
-            v="$(sed -n 's/^SWG_LISTEN=//p' "$file" | tail -n1 || true)"; [ -z "$v" ] || listen="$v"
-        done < <(printf '%s\n' "$text" | sed -n 's/^EnvironmentFile=//p' || true)
+        read -r iface listen <<<"$(panel_unit_settings "$unit")"
         if [ "$iface" = "$CSQTT_IFACE" ] || [ "${listen##*:}" = "$PEER_PORT" ]; then
-            claims="${claims:+$claims, }${unit} (${iface:-?}, ${listen:-?}, $(systemctl is-active "$unit" 2>/dev/null || true))"
+            claims="${claims:+$claims, }${unit} (${iface}, ${listen}, $(systemctl is-active "$unit" 2>/dev/null || true))"
         fi
     done < <(systemctl list-unit-files 'swg-csqtt-*.service' --no-legend --plain 2>/dev/null | awk '{print $1}' || true)
     printf '%s' "$claims"
+}
+
+# A swg-panel unit's interface and UDP listen address: its --iface/--listen, overridden by SWG_IFACE/SWG_LISTEN in its
+# EnvironmentFile. Prints "<iface> <listen>", "?" for one it does not name.
+panel_unit_settings() {
+    local text file v iface listen
+    text="$(systemctl cat "$1" 2>/dev/null || true)"
+    iface="$(printf '%s\n' "$text" | grep -oE -- '--iface [^ $]+' | tail -n1 | cut -d' ' -f2 || true)"
+    listen="$(printf '%s\n' "$text" | grep -oE -- '--listen [^ $]+' | tail -n1 | cut -d' ' -f2 || true)"
+    while IFS= read -r file; do
+        file="${file#-}"
+        [ -f "$file" ] || continue
+        v="$(sed -n 's/^SWG_IFACE=//p' "$file" | tail -n1 || true)"; [ -z "$v" ] || iface="$v"
+        v="$(sed -n 's/^SWG_LISTEN=//p' "$file" | tail -n1 || true)"; [ -z "$v" ] || listen="$v"
+    done < <(printf '%s\n' "$text" | sed -n 's/^EnvironmentFile=//p' || true)
+    printf '%s %s' "${iface:-?}" "${listen:-?}"
 }
 
 # Both modes replace only what this app installed. Another server on this interface or port is refused before anything is
@@ -2646,7 +2655,7 @@ start_csqtt() {
 }
 
 # Is anything of THIS instance installed? The uninstall used to report success on a box without it — «Удалить» in
-# «Рядом с 2.1.9» on a box that has only the stock server said "removed" and removed nothing.
+# A side uninstall on a box that has only the stock server said "removed" and removed nothing.
 csqtt_instance_installed() {
     [ -e "$CSQTT_BIN" ] || [ -d "$CSQTT_LIB_DIR" ] || csqtt_systemd_unit_exists || csqtt_docker_container_exists || \
         ip link show "$CSQTT_IFACE" >/dev/null 2>&1 || [ -e "/etc/systemd/system/${CSQTT_LE_TIMER}" ]
@@ -2740,8 +2749,166 @@ main_install_csqtt_version() {
     else
         return 0
     fi
-    { grep -a -o -m1 -E 'aria-label="v[0-9][^"]{0,30} by amurcanov"' "$exe" 2>/dev/null || true; } | head -n 1 | \
+    binary_version_label "$exe"
+}
+
+# The version label a csqtt binary compiles into its web panel (2.1.9 and 2.5.x carry one); empty without it.
+binary_version_label() {
+    { grep -a -o -m1 -E 'aria-label="v[0-9][^"]{0,30} by amurcanov"' "$1" 2>/dev/null || true; } | head -n 1 | \
         sed -E 's/^aria-label="v([^ "]*) by amurcanov"$/\1/'
+}
+
+# ---- The server check the app runs before it offers anything (deploy-check-first-design.md §1–§2) ----
+# `deploy.sh inventory`: read-only — installs, stops and writes nothing. One CSQTT_INV line per finding; the app trusts the
+# result only after CSQTT_INV|end.
+
+# The standard place's own units (2.1.9's cascade helper /usr/local/bin/csqtt-cascade matches the stock pattern too).
+readonly STANDARD_PLACE_UNITS="csqtt.service csqtt-cascade.service csqtt-letsencrypt.service csqtt-docker-prereq.service"
+
+# "<udp> <web>" from a server command line (--listen HOST:PORT, --web-port PORT); an absent flag is the server's own
+# default, 46000 / 46002.
+server_ports_in() {
+    local listen web
+    listen="$(grep -oE -- '--listen[= ][^ "]+' <<<"$1" | tail -n1 | sed -E 's/.*://' || true)"
+    web="$(grep -oE -- '--web-port[= ][0-9]+' <<<"$1" | tail -n1 | grep -oE '[0-9]+$' || true)"
+    case "$listen" in ''|*[!0-9]*) listen=46000 ;; esac
+    case "$web" in ''|*[!0-9]*) web=46002 ;; esac
+    printf '%s %s' "$listen" "$web"
+}
+
+pid_args() { { tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null || true; }
+
+docker_id() { command -v docker >/dev/null 2>&1 && docker inspect --format '{{.Id}}' "$1" 2>/dev/null || true; }
+
+# Is PID $1 in one of these units or containers? By cgroup: a hand-made server runs the same /usr/local/bin/csqtt, only
+# from its own unit or container. $2: unit names, $3: container ids (space-separated).
+pid_in_cgroups() {
+    local cg u
+    cg="$(cat "/proc/$1/cgroup" 2>/dev/null || true)"
+    for u in $2; do case "$cg" in *"/$u"*) return 0 ;; esac; done
+    for u in $3; do case "$cg" in *"$u"*) return 0 ;; esac; done
+    return 1
+}
+
+# What main mode's cleanup would stop, kill or delete that is not the standard place: a RUNNING unit with the stock paths
+# outside its units, a running container other than csqtt/csqtt25 that runs /usr/local/bin/csqtt, a stock-binary process
+# outside all of those. "<runtime>|<name>|<pid>" per line. Main role only (the side matchers see none of these).
+main_place_strangers() {
+    local unit c pid known_ids strange_units="" strange_ids=""
+    known_ids="$(docker_id csqtt) $(docker_id csqtt25)"
+    while IFS= read -r unit; do
+        [ -n "$unit" ] || continue
+        case " $STANDARD_PLACE_UNITS " in *" $unit "*) continue ;; esac
+        systemctl is-active --quiet "$unit" 2>/dev/null || continue
+        strange_units="$strange_units $unit"
+        printf 'systemd|%s|%s\n' "$unit" "$(systemctl show --value -p MainPID "$unit" 2>/dev/null || true)"
+    done < <(list_csqtt_systemd_units)
+    if command -v docker >/dev/null 2>&1; then
+        while IFS= read -r c; do
+            case "$c" in ''|csqtt|csqtt25) continue ;; esac
+            docker_container_runs_csqtt "$c" || continue
+            strange_ids="$strange_ids $(docker_id "$c")"
+            printf 'docker|%s|%s\n' "$c" "$(docker inspect --format '{{.State.Pid}}' "$c" 2>/dev/null || true)"
+        done < <(docker ps --format '{{.Names}}' 2>/dev/null || true)
+    fi
+    for pid in $(all_csqtt_process_pids); do
+        pid_in_cgroups "$pid" "$STANDARD_PLACE_UNITS csqtt25.service$strange_units" "$known_ids$strange_ids" && continue
+        printf 'process|%s|%s\n' "$(describe_pid "$pid")" "$pid"
+    done
+    return 0
+}
+
+inv_line() {
+    local out="CSQTT_INV" field
+    for field in "$@"; do out="$out|${field//|/}"; done
+    printf '%s\n' "${out//$'\n'/ }"
+}
+
+# One place's server: a running unit, else a running container, else a stopped unit or container, else what is left.
+inv_place() {
+    local place="$1" unit="$2" ctr="$3" bin="$4" store="$5" text_pattern="$6"
+    local runtime="" state="" name="" pid="" exe="$bin" args="" ver="" text="" image="" unit_ok=0 ctr_ok=0 peer web
+    if command -v systemctl >/dev/null 2>&1 && [ "$(systemctl show --value -p LoadState "$unit" 2>/dev/null || true)" = loaded ]; then
+        text="$(systemctl cat "$unit" 2>/dev/null || true)"
+        grep -Eq "$text_pattern" <<<"$text" && unit_ok=1
+    fi
+    command -v docker >/dev/null 2>&1 && docker inspect "$ctr" >/dev/null 2>&1 && ctr_ok=1
+    if [ "$unit_ok" = 1 ] && systemctl is-active --quiet "$unit" 2>/dev/null; then
+        runtime=systemd; state=running; name="$unit"
+        pid="$(systemctl show --value -p MainPID "$unit" 2>/dev/null || true)"
+    elif [ "$ctr_ok" = 1 ] && [ "$(docker inspect --format '{{.State.Running}}' "$ctr" 2>/dev/null || true)" = true ]; then
+        runtime=docker; state=running; name="$ctr"
+        pid="$(docker inspect --format '{{.State.Pid}}' "$ctr" 2>/dev/null || true)"
+    elif [ "$unit_ok" = 1 ]; then
+        runtime=systemd; state=stopped; name="$unit"
+        args="$(sed -n 's/^ExecStart=//p' <<<"$text" | tail -n1 || true)"
+    elif [ "$ctr_ok" = 1 ]; then
+        runtime=docker; state=stopped; name="$ctr"
+        args="$(docker inspect --format '{{.Path}} {{join .Args " "}}' "$ctr" 2>/dev/null || true)"
+    elif [ -e "$bin" ] || [ -f "$store/$CSQTT_DATABASE_FILE" ] || [ -f "$store/csqtt.env" ]; then
+        runtime=none; state=leftover; name="$bin"; [ -e "$bin" ] || name="$store"
+    else
+        return 0
+    fi
+    if [ -n "$pid" ] && [ "$pid" != 0 ] && [ -e "/proc/$pid/exe" ]; then
+        exe="/proc/$pid/exe"; args="$(pid_args "$pid")"
+    fi
+    ver="$(binary_version_label "$exe")"
+    if [ -z "$ver" ] && [ "$runtime" = docker ]; then
+        # a stopped container's binary lives in its image, tagged with the version (csqtt:2.5.0)
+        image="$(docker inspect --format '{{.Config.Image}}' "$ctr" 2>/dev/null || true)"
+        case "${image##*:}" in [0-9]*) ver="${image##*:}" ;; esac
+    fi
+    read -r peer web <<<"$(server_ports_in "$args")"
+    inv_line server "place=$place" "runtime=$runtime" "state=$state" "version=${ver:-?}" "peer=$peer" "web=$web" "name=$name"
+}
+
+do_inventory() {
+    [ "$CSQTT_ROLE" = main ] || die "inventory запускается без CSQTT_INSTANCE"
+    local runtime name pid unit iface listen exe ver peer web spec proto port holders
+    inv_place standard csqtt.service csqtt /usr/local/bin/csqtt /etc/csqtt '(/usr/local/bin/csqtt|/usr/local/lib/csqtt/)'
+    inv_place side csqtt25.service csqtt25 /usr/local/lib/csqtt25/csqtt25 /etc/csqtt25 '/usr/local/lib/csqtt25/'
+    if command -v systemctl >/dev/null 2>&1; then
+        while IFS= read -r unit; do
+            case "$unit" in swg-csqtt-?*.service) ;; *) continue ;; esac
+            read -r iface listen <<<"$(panel_unit_settings "$unit")"
+            exe="$(systemctl show --value -p ExecStart "$unit" 2>/dev/null | grep -oE 'path=[^ ;]+' | head -n1 | cut -d= -f2 || true)"
+            ver="$( [ -n "$exe" ] && binary_version_label "$exe" || true)"
+            inv_line server place=panel runtime=systemd \
+                "state=$(systemctl is-active --quiet "$unit" 2>/dev/null && echo running || echo stopped)" \
+                "version=${ver:-?}" "peer=${listen##*:}" web=? "name=$unit"
+        done < <(systemctl list-unit-files 'swg-csqtt-*.service' --no-legend --plain 2>/dev/null | awk '{print $1}' || true)
+    fi
+    while IFS='|' read -r runtime name pid; do
+        [ -n "$runtime" ] || continue
+        exe=""; [ -n "$pid" ] && [ "$pid" != 0 ] && [ -e "/proc/$pid/exe" ] && exe="/proc/$pid/exe"
+        ver="$( [ -n "$exe" ] && binary_version_label "$exe" || true)"
+        read -r peer web <<<"$(server_ports_in "$( [ -n "$exe" ] && pid_args "$pid" || true)")"
+        inv_line server place=other "runtime=$runtime" state=running "version=${ver:-?}" "peer=$peer" "web=$web" "name=$name"
+    done < <(main_place_strangers)
+    # stopped units with the stock paths outside the standard place's: main mode deletes them as today — named here
+    while IFS= read -r unit; do
+        [ -n "$unit" ] || continue
+        case " $STANDARD_PLACE_UNITS " in *" $unit "*) continue ;; esac
+        systemctl is-active --quiet "$unit" 2>/dev/null && continue
+        read -r peer web <<<"$(server_ports_in "$(systemctl show --value -p ExecStart "$unit" 2>/dev/null | sed -n 's/.*argv\[\]=\([^;]*\);.*/\1/p' | head -n1 || true)")"
+        inv_line server place=leftover runtime=systemd state=stopped version=? "peer=$peer" "web=$web" "name=$unit"
+    done < <(list_csqtt_systemd_units)
+    # the default ports, when something that is not a csqtt server holds them
+    for spec in u:46000 t:46002 u:46100 t:46102; do
+        proto="${spec%%:*}"; port="${spec#*:}"; holders=""
+        while IFS= read -r pid; do
+            [ -n "$pid" ] || continue
+            case "$(readlink "/proc/$pid/exe" 2>/dev/null || true)" in *csqtt*) continue ;; esac
+            holders="${holders:+$holders, }$(describe_pid "$pid")"
+        done < <(ss -H -l"${proto}"np "sport = :${port}" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -un || true)
+        if [ -z "$holders" ] && ss -H -l"${proto}"n "sport = :${port}" 2>/dev/null | grep -q . && \
+           [ -z "$(ss -H -l"${proto}"np "sport = :${port}" 2>/dev/null | grep -oE 'pid=[0-9]+' || true)" ]; then
+            holders="процесс без видимого PID"
+        fi
+        [ -z "$holders" ] || inv_line busy "proto=$( [ "$proto" = u ] && echo udp || echo tcp)" "port=$port" "by=$holders"
+    done
+    inv_line end
 }
 
 # Side mode refuses BEFORE anything is stopped or changed: over a 2.5 server (a 2.5.1 user redeploying would otherwise get
@@ -2749,13 +2916,13 @@ main_install_csqtt_version() {
 side_preflight() {
     local ver
     ver="$(main_install_csqtt_version || true)"
-    # an existing side server is being UPDATED: allowed whatever runs next to it (a later «Вместо 2.1.9» may have put 2.5 there)
+    # an existing side server is being UPDATED: allowed whatever runs next to it (a later standard-place deploy may have put 2.5 there)
     if csqtt_systemd_unit_exists || csqtt_docker_container_exists; then
         log_info "Обновление ${CSQTT_NAME}"
     else
         case "$ver" in
             ""|0.*|1.*|2.0|2.0.*|2.1|2.1.*) ;;
-            *) die "Здесь уже работает csqtt ${ver}. «Рядом с 2.1.9» ставит второй сервер рядом с 2.1.9 — чтобы обновить этот сервер, выберите «Вместо 2.1.9»" "$EXIT_PREFLIGHT_FAILED" ;;
+            *) die "Здесь уже работает csqtt ${ver} — его можно только обновить. Проверьте сервер заново" "$EXIT_PREFLIGHT_FAILED" ;;
         esac
     fi
     [ -n "$ver" ] && log_info "Рядом работает csqtt ${ver} (csqtt1) — он не затрагивается"
@@ -2765,7 +2932,7 @@ side_preflight() {
 }
 
 # Main mode replaces the stock server (whatever of it holds the ports is stopped, as before) and nothing else: the server
-# next to it (after a side deploy the app's profile keeps the side's ports as "manual", so a later «Вместо 2.1.9» from it
+# next to it (after a side deploy the app's profile keeps the side's ports as "manual", so a later standard-place deploy from it
 # would kill csqtt25), another server on csqtt1 or the port, or any other program. All refused before anything is stopped.
 main_preflight() {
     local proto port pid exe
@@ -2776,13 +2943,17 @@ main_preflight() {
             exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
             case "$exe" in
                 /usr/local/lib/csqtt25/*|/opt/csqtt25/*)
-                    die "Порт ${port} занят сервером рядом с 2.1.9 (csqtt25). Для «Вместо 2.1.9» выключите «Ручные порты» или укажите другие порты" "$EXIT_PREFLIGHT_FAILED" ;;
+                    die "Порт ${port} занят вторым сервером (csqtt25). Проверьте сервер заново или укажите другие порты («Ручные порты»)" "$EXIT_PREFLIGHT_FAILED" ;;
             esac
         done < <(ss -H -l"${proto}"np "sport = :${port}" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -un || true)
     done
     refuse_anothers_server
     refuse_foreign_port_holder u "$PEER_PORT" "UDP-порт"
     refuse_foreign_port_holder t "$WEB_PORT" "TCP-порт WEB-панели"
+    # a server someone else runs from the stock binary: this mode's cleanup would stop, kill and delete it
+    local strangers
+    strangers="$(main_place_strangers | cut -d'|' -f2 | paste -sd ',' - | sed 's/,/, /g' || true)"
+    [ -z "$strangers" ] || die "Здесь работает ещё один сервер csqtt, установленный не этим приложением: ${strangers}. Установка на стандартное место остановила бы и удалила его — отменено" "$EXIT_PREFLIGHT_FAILED"
 }
 
 handle_unexpected_error() {
@@ -2801,9 +2972,14 @@ handle_unexpected_error() {
 trap 'handle_unexpected_error "$LINENO" "$?"' ERR
 
 main() {
+    if [ "${1:-}" = inventory ]; then
+        check_root
+        do_inventory
+        return 0
+    fi
     echo "╔══════════════════════════════════════════════════════════════╗"
     echo "║       CSQTT VPN Server — Installer v${SCRIPT_VERSION}                    ║"
-    [ "$CSQTT_ROLE" = side ] && echo "║       Режим: рядом с 2.1.9 — сервер ${CSQTT_NAME}"
+    [ "$CSQTT_ROLE" = side ] && echo "║       Второй сервер: ${CSQTT_NAME}"
     echo "║       PEER: ${PEER_PORT}  |  SSH: ${SSH_PORT}  | WEB: ${WEB_PORT}       ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
 
