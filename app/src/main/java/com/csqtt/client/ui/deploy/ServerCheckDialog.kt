@@ -61,7 +61,7 @@ internal fun ServerCheckDialog(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    if (servers.isEmpty()) {
+                    if (servers.isEmpty() && emptyText.isNotBlank()) {
                         Text(emptyText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     servers.forEach { (name, detail) ->

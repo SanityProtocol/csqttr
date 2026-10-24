@@ -660,7 +660,7 @@ internal fun DeployTab(
         ServerCheckDialog(
             title = "Удаление с сервера",
             servers = emptyList(),
-            emptyText = "Серверов, установленных этим приложением, здесь нет",
+            emptyText = if (servers.isEmpty()) "Серверов, установленных этим приложением, здесь нет" else "",
             notes = emptyList(),
             choices = servers.map { server ->
                 val (name, detail) = describeServer(server, profilePeer)
