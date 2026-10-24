@@ -1050,6 +1050,17 @@ async fn async_main() -> Result<()> {
         args.instance.clone(),
     )?);
 
+    // As the short form above: without --instance the flag names the stock server's unit, which only a binary
+    // installed as `csqtt` may act on (`csqtt25 --restart` restarted the stock server next to it).
+    if (args.start || args.stop || args.restart) && args.instance.is_none() {
+        let exe = std::env::args()
+            .next()
+            .and_then(|a| std::path::Path::new(&a).file_name().and_then(|n| n.to_str()).map(str::to_owned))
+            .unwrap_or_default();
+        if exe != swgpanel::DEFAULT_INSTANCE {
+            bail!("укажите сервер: {exe} --instance <имя> --start|--stop|--restart");
+        }
+    }
     if args.start {
         return run_systemctl("start");
     }
@@ -1247,7 +1258,7 @@ async fn async_main() -> Result<()> {
         });
     }
 
-    log_event(&app, "INFO", "SYSTEM", " CSQTT Server 2.5.1-2 (swg-panel build of amurcanov 2.5.0)");
+    log_event(&app, "INFO", "SYSTEM", " CSQTT Server 2.5.2 (SanityProtocol build of amurcanov 2.5.0)");
     log_event(
         &app,
         "INFO",
@@ -1282,7 +1293,11 @@ async fn async_main() -> Result<()> {
         });
     }
 
-    tokio::spawn(auto_restart_loop(app.clone(), auto_restart_interval_rx));
+    // swg-panel: headless has no web panel to set the interval, and its unit (swg-noded's) restarts only on failure —
+    // a scheduled self-restart (a clean exit 0) from a copied or adopted store would leave the server down for good
+    if !swgpanel::headless() {
+        tokio::spawn(auto_restart_loop(app.clone(), auto_restart_interval_rx));
+    }
 
     // swg-panel: headless (--no-web) runs no web admin panel, so skip its self-signed cert generation,
     // the TLS config it loads and the reload loop that watches it — all three exist only to serve that
@@ -1531,6 +1546,7 @@ async fn swgpanel_desired_loop(app: Arc<App>, path: std::path::PathBuf) {
     let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()).ok();
     let mut ticker = tokio::time::interval(Duration::from_secs(3));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut ticks = 0u32;
     loop {
         let hup = async {
             match sighup.as_mut() {
@@ -1542,6 +1558,11 @@ async fn swgpanel_desired_loop(app: Arc<App>, path: std::path::PathBuf) {
         };
         tokio::select! {
             _ = ticker.tick() => {
+                // once a minute: an expiry passes with no change to the file, and its live sessions must end
+                ticks = ticks.wrapping_add(1);
+                if ticks % 20 == 0 {
+                    protocol::cut_expired_password_sessions(&app).await;
+                }
                 let m = std::fs::metadata(&path).and_then(|md| md.modified()).ok();
                 if m != last {
                     last = m;

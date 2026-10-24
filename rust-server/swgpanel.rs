@@ -181,6 +181,12 @@ pub fn build(
             if octs.len() != 4 {
                 anyhow::bail!("bad --tun-addr {a}");
             }
+            // .2 is the owner's address and .3–.250 the client pool (ip_in_pool, get_next_ip): a server address in
+            // there is handed to a client too, whose downlink then stays on the server. Outside that range anything
+            // a node already uses keeps working.
+            if (2..=250).contains(&octs[3]) {
+                anyhow::bail!("--tun-addr {a}: the server's address must not be in the client range .2–.250 (use .1)");
+            }
             cfg.subnet_prefix = [octs[0], octs[1], octs[2]];
             cfg.gw_addr = format!("{}.{}.{}.{}", octs[0], octs[1], octs[2], octs[3]);
             cfg.subnet_cidr = format!("{}.{}.{}.0/24", octs[0], octs[1], octs[2]);
@@ -195,6 +201,16 @@ pub fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tun_addr_in_the_client_range_is_refused() {
+        for bad in ["10.66.68.2/24", "10.66.68.5/24", "10.66.68.250/24"] {
+            assert!(build(None, Some(bad.to_owned()), false, false, None, None).is_err(), "{bad}");
+        }
+        for ok in ["10.66.68.1/24", "10.66.68.0/24", "10.66.68.254/24"] {
+            assert!(build(None, Some(ok.to_owned()), false, false, None, None).is_ok(), "{ok}");
+        }
+    }
 
     #[test]
     fn no_flags_is_stock() {

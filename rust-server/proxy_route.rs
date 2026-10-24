@@ -67,7 +67,11 @@ impl ProxyRoute {
             remove_tproxy_status_file(&status_path);
             let _guard = POLICY_LOCK.lock().await;
             cleanup_shared_policy().await;
-            cleanup_legacy_proxy_policy().await;
+            // stock's legacy rule/table (fwmark 0x422, table 1066) are the default instance's to clear, as at its other
+            // call sites — a second server's failed activation must not touch them
+            if crate::swgpanel::is_default_instance() {
+                cleanup_legacy_proxy_policy().await;
+            }
             return Err(error);
         }
 

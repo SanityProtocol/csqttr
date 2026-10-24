@@ -5393,6 +5393,24 @@ async fn run_password_janitor_cycle(app: &Arc<App>) {
     }
 }
 
+/// Under --desired the panel owns the password set, so no janitor removes entries — but an expired password must not
+/// keep a live tunnel: GETCONF refuses its new sessions, this cuts the ones already up. The entries stay.
+pub async fn cut_expired_password_sessions(app: &Arc<App>) {
+    let expired = {
+        let Ok(db) = db_read(app).await else {
+            return;
+        };
+        db.passwords
+            .iter()
+            .filter(|(_, entry)| is_expired(entry))
+            .map(|(password, _)| password.clone())
+            .collect::<Vec<String>>()
+    };
+    for password in expired {
+        drop_password_sessions(app, &password);
+    }
+}
+
 pub async fn password_janitor(app: Arc<App>) {
     let mut timer = tokio::time::interval(Duration::from_secs(3600));
     loop {
