@@ -40,17 +40,19 @@ impl Stats {
                     let up = self.total_bytes_up.load(Ordering::Relaxed);
                     let down = self.total_bytes_down.load(Ordering::Relaxed);
                     log_counter += 1;
-                    if log_counter >= 6 {
-                        log_counter = 0;
-                        let total_mb = (up + down) as f64 / (1024.0 * 1024.0);
-                        crate::log_error!("[СТАТИСТИКА] Активных: {active} | Трафик: {total_mb:.2} МБ");
-                    }
                     ticks_since_emit += 1;
                     let now = (active, up, down);
                     if should_emit(last_emitted, now, ticks_since_emit) {
                         events.stats(active, up, down);
                         last_emitted = Some(now);
                         ticks_since_emit = 0;
+                        // the log line (stderr) rides on a STATS tick: on an idle tunnel both go out together every
+                        // 3 s, one wakeup of the app's reader instead of two 500 ms apart
+                        if log_counter >= HEARTBEAT_TICKS {
+                            log_counter = 0;
+                            let total_mb = (up + down) as f64 / (1024.0 * 1024.0);
+                            crate::log_error!("[СТАТИСТИКА] Активных: {active} | Трафик: {total_mb:.2} МБ");
+                        }
                     }
                 }
             }

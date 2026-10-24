@@ -38,6 +38,14 @@ impl VirtualDevice {
     }
 }
 
+impl VirtualDevice {
+    /// A frame is still queued for smoltcp: `receive` keeps it while the egress channel is full, so the runner must
+    /// not park on its idle Notify then — nothing notifies it when egress drains.
+    pub(super) fn ingress_pending(&self) -> bool {
+        !self.in_buf.is_empty()
+    }
+}
+
 impl Device for VirtualDevice {
     type RxToken<'a> = VirtualRxToken;
     type TxToken<'a> = VirtualTxToken<'a>;
@@ -130,5 +138,24 @@ mod tests {
             .receive(Instant::from_millis(1))
             .expect("in_buf packet must not have been dropped while out_buf was full");
         assert_eq!(rx_token.consume(|buf| buf.to_vec()), b"payload");
+    }
+
+    #[test]
+    fn ingress_pending_while_a_kept_frame_waits_for_egress() {
+        // the runner parks on its idle Notify only with nothing queued: a frame `receive` kept because egress was
+        // full must hold it on the timed re-poll, or it waits for the next ingress packet
+        let (out_tx, mut out_rx) = channel::<AnyIpPktFrame>(1);
+        let (mut device, ingress_tx, _in_buf_avail) = VirtualDevice::new(out_tx.clone(), 1500);
+        assert!(!device.ingress_pending());
+        out_tx.try_send(vec![0u8; 4]).unwrap();
+        ingress_tx.try_send(b"payload".to_vec()).unwrap();
+        assert!(device.receive(Instant::from_millis(0)).is_none());
+        assert!(device.ingress_pending());
+        out_rx.try_recv().unwrap();
+        {
+            let (rx_token, _tx_token) = device.receive(Instant::from_millis(1)).unwrap();
+            rx_token.consume(|_| ());
+        }
+        assert!(!device.ingress_pending());
     }
 }

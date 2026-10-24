@@ -343,11 +343,12 @@ impl TcpListenerRunner {
                 tokio::task::yield_now().await;
             } else {
                 let poll_delay = iface.poll_delay(before_poll, &socket_set);
-                if poll_delay.is_none() && sockets.is_empty() {
+                if poll_delay.is_none() && sockets.is_empty() && !device.ingress_pending() {
                     // No socket and no pending fragment: nothing here runs on a timer. What can change that (an
                     // ingress packet, the SYN that creates a socket) calls notify_one, and a notify sent while we
                     // were polling is kept as a permit. The 5 ms re-poll below woke the runtime ~200 times a second
-                    // for the whole life of an idle tunnel (csqtt 2.5.2, measured on a phone).
+                    // for the whole life of an idle tunnel (csqtt 2.5.2, measured on a phone). A frame still queued
+                    // (egress was full, `receive` kept it) takes the timed re-poll below instead.
                     notify.notified().await;
                     continue;
                 }
