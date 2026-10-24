@@ -279,52 +279,6 @@ class SettingsStore(context: Context) {
     private val dataStore = appContext.dataStore
     private val secureStore = SecureStringStore(appContext)
 
-    init {
-        if (migrationsStarted.compareAndSet(false, true)) {
-            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-                migrateConnectionPasswordsToLocalStorage()
-                migrateSecretsToKeystore()
-                migrateLegacyWhitelistMode()
-            }
-        }
-        if (uiCacheStarted.compareAndSet(false, true)) {
-            CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
-                launch {
-                    dataStore.edit { prefs ->
-                        for (p in CsqttConstants.Profiles.MIN_INDEX..CsqttConstants.Profiles.MAX_INDEX) {
-                            prefs[getProfileKey(EXTRA_WORKERS, p)] = false
-                        }
-                    }
-                }
-                launch { vkHashMode.collect { cachedVkHashMode = it } }
-                launch { vkAccessToken.collect { cachedVkAccessToken = it } }
-                launch { obfsMode.collect { cachedObfsMode = it } }
-                launch { turnTransport.collect { cachedTurnTransport = it } }
-                launch { srtpMode.collect { cachedSrtpMode = it } }
-                launch { csqttLinkMode.collect { cachedCsqttLinkMode = it } }
-                launch { workersPerHash.collect { cachedWorkersPerHash = it } }
-                launch { manualPortsEnabled.collect { cachedManualPortsEnabled = it } }
-                launch { serverPeerPort.collect { cachedServerPeerPort = it } }
-                cachedExtraWorkers = false
-                launch { customTurnIps.collect { cachedCustomTurnIps = it } }
-                launch { excludedApps.collect { cachedExcludedApps = it } }
-                launch { whitelistApps.collect { cachedWhitelistApps = it } }
-                launch { isWhitelist.collect { cachedIsWhitelist = it } }
-                launch { domainRoutingEnabled.collect { cachedDomainRoutingEnabled = it } }
-                launch { domainIsWhitelist.collect { cachedDomainIsWhitelist = it } }
-                launch { excludeRuZonesEnabled.collect { cachedExcludeRuZonesEnabled = it } }
-                launch { templateDomainsEnabled.collect { cachedTemplateDomainsEnabled = it } }
-                launch { directDomains.collect { cachedDirectDomains = it } }
-                launch { directDomainsBlack.collect { cachedDirectDomainsBlack = it } }
-                launch { directDomainsWhite.collect { cachedDirectDomainsWhite = it } }
-                launch { ipRoutingEnabled.collect { cachedIpRoutingEnabled = it } }
-                launch { ipIsWhitelist.collect { cachedIpIsWhitelist = it } }
-                launch { directIpsBlack.collect { cachedDirectIpsBlack = it } }
-                launch { directIpsWhite.collect { cachedDirectIpsWhite = it } }
-            }
-        }
-    }
-
     val activeProfile: Flow<Int> = dataStore.data.map {
         (it[ACTIVE_PROFILE] ?: CsqttConstants.Profiles.MIN_INDEX).coerceIn(
             CsqttConstants.Profiles.MIN_INDEX,
@@ -693,6 +647,55 @@ class SettingsStore(context: Context) {
     val updateCheckIntervalHours: Flow<Int> = dataStore.data.map { it[UPDATE_CHECK_INTERVAL_HOURS] ?: 24 }
     val updatePostponeUntil: Flow<Long> = dataStore.data.map { it[UPDATE_POSTPONE_UNTIL] ?: 0L }
     val updatePostponeVersion: Flow<String> = dataStore.data.map { it[UPDATE_POSTPONE_VERSION] ?: "" }
+
+    // Last in the class, after every property: Kotlin assigns them top to bottom, and the collectors below start on
+    // other threads at once. Above the flows they read, a collector could run before its flow was assigned and call
+    // collect on null, which crashed the app at launch on slower phones (Redmi).
+    init {
+        if (migrationsStarted.compareAndSet(false, true)) {
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                migrateConnectionPasswordsToLocalStorage()
+                migrateSecretsToKeystore()
+                migrateLegacyWhitelistMode()
+            }
+        }
+        if (uiCacheStarted.compareAndSet(false, true)) {
+            CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+                launch {
+                    dataStore.edit { prefs ->
+                        for (p in CsqttConstants.Profiles.MIN_INDEX..CsqttConstants.Profiles.MAX_INDEX) {
+                            prefs[getProfileKey(EXTRA_WORKERS, p)] = false
+                        }
+                    }
+                }
+                launch { vkHashMode.collect { cachedVkHashMode = it } }
+                launch { vkAccessToken.collect { cachedVkAccessToken = it } }
+                launch { obfsMode.collect { cachedObfsMode = it } }
+                launch { turnTransport.collect { cachedTurnTransport = it } }
+                launch { srtpMode.collect { cachedSrtpMode = it } }
+                launch { csqttLinkMode.collect { cachedCsqttLinkMode = it } }
+                launch { workersPerHash.collect { cachedWorkersPerHash = it } }
+                launch { manualPortsEnabled.collect { cachedManualPortsEnabled = it } }
+                launch { serverPeerPort.collect { cachedServerPeerPort = it } }
+                cachedExtraWorkers = false
+                launch { customTurnIps.collect { cachedCustomTurnIps = it } }
+                launch { excludedApps.collect { cachedExcludedApps = it } }
+                launch { whitelistApps.collect { cachedWhitelistApps = it } }
+                launch { isWhitelist.collect { cachedIsWhitelist = it } }
+                launch { domainRoutingEnabled.collect { cachedDomainRoutingEnabled = it } }
+                launch { domainIsWhitelist.collect { cachedDomainIsWhitelist = it } }
+                launch { excludeRuZonesEnabled.collect { cachedExcludeRuZonesEnabled = it } }
+                launch { templateDomainsEnabled.collect { cachedTemplateDomainsEnabled = it } }
+                launch { directDomains.collect { cachedDirectDomains = it } }
+                launch { directDomainsBlack.collect { cachedDirectDomainsBlack = it } }
+                launch { directDomainsWhite.collect { cachedDirectDomainsWhite = it } }
+                launch { ipRoutingEnabled.collect { cachedIpRoutingEnabled = it } }
+                launch { ipIsWhitelist.collect { cachedIpIsWhitelist = it } }
+                launch { directIpsBlack.collect { cachedDirectIpsBlack = it } }
+                launch { directIpsWhite.collect { cachedDirectIpsWhite = it } }
+            }
+        }
+    }
 
     suspend fun saveTunnelWasRunning(running: Boolean) {
         dataStore.edit { prefs ->
