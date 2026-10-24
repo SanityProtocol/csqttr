@@ -71,33 +71,10 @@ class DeployUiStateTest {
     }
 
     @Test
-    fun `next to 2_1_9 is the default and takes its own ports`() {
-        assertTrue(DeployInstance.fromStored(null) == DeployInstance.SIDE)
-        assertTrue(DeployInstance.fromStored("garbage") == DeployInstance.SIDE)
-        assertTrue(DeployInstance.fromStored("main") == DeployInstance.MAIN)
-        assertTrue(DeployUiState().instance == DeployInstance.SIDE)
-        val side = resolveServerPorts(manualPorts = false, sshPort = "22", peerPort = "46000", webPort = "46002", instance = DeployInstance.SIDE)
-        assertTrue(side.peer == 46100 && side.web == 46102 && side.ssh == 22)
-        val main = resolveServerPorts(manualPorts = false, sshPort = "22", peerPort = "1", webPort = "2", instance = DeployInstance.MAIN)
-        assertTrue(main.peer == 46000 && main.web == 46002)
-        // manual ports left at the stock values (2.5.1 prefilled them) are the 2.1.9 server's: next to it they mean "not chosen"
-        val prefilled = resolveServerPorts(manualPorts = true, sshPort = "2222", peerPort = "46000", webPort = "46002", instance = DeployInstance.SIDE)
-        assertTrue(prefilled.peer == 46100 && prefilled.web == 46102 && prefilled.ssh == 2222)
-        val replaceKeeps = resolveServerPorts(manualPorts = true, sshPort = "22", peerPort = "46000", webPort = "46002", instance = DeployInstance.MAIN)
-        assertTrue(replaceKeeps.peer == 46000 && replaceKeeps.web == 46002)
-        val sideState = completeState.copy(instance = DeployInstance.SIDE, manualPorts = true, peerPort = "46000", webPort = "46002")
-        assertTrue(sideState.sideReplacesStockPorts() && sideState.panelDisplayUrl.startsWith("https://server.example:46002/"))
-        assertFalse(sideState.copy(instance = DeployInstance.MAIN).sideReplacesStockPorts())
-        // switching the mode moves the ports still at the old mode's defaults, and only those
-        assertTrue(portsForInstanceSwitch(DeployInstance.MAIN, DeployInstance.SIDE, "46000", "46002") == Pair("46100", "46102"))
-        assertTrue(portsForInstanceSwitch(DeployInstance.SIDE, DeployInstance.MAIN, "46100", "46102") == Pair("46000", "46002"))
-        assertTrue(portsForInstanceSwitch(DeployInstance.MAIN, DeployInstance.SIDE, "47000", "46002") == Pair("47000", "46102"))
-        // manual ports are the user's, whatever the mode
-        val manual = resolveServerPorts(manualPorts = true, sshPort = "22", peerPort = "47000", webPort = "47002", instance = DeployInstance.SIDE)
-        assertTrue(manual.peer == 47000 && manual.web == 47002)
-        // the panel link is the profile's server (a side deploy stores its ports on success), whatever the mode
-        assertTrue(completeState.copy(instance = DeployInstance.SIDE).panelDisplayUrl.startsWith("https://server.example:46002/"))
-        assertTrue(completeState.copy(instance = DeployInstance.SIDE, manualPorts = true, webPort = "46102").panelDisplayUrl.startsWith("https://server.example:46102/"))
+    fun `the panel link is the profile's server`() {
+        // a deploy stores the server's ports on success; the link follows them
+        assertTrue(completeState.panelDisplayUrl.startsWith("https://server.example:46002/"))
+        assertTrue(completeState.copy(manualPorts = true, webPort = "46102").panelDisplayUrl.startsWith("https://server.example:46102/"))
     }
 
     @Test

@@ -46,7 +46,6 @@ import com.csqtt.client.CSQTTTheme
 import com.csqtt.client.CsqttConstants
 import com.csqtt.client.R
 import com.csqtt.client.ui.components.CsqttScreen
-import com.csqtt.client.ui.components.CsqttSegmentedControl
 import com.csqtt.client.ui.components.CsqttSettingRow
 import com.csqtt.client.ui.design.CsqttShapes
 import com.csqtt.client.ui.design.CsqttSizes
@@ -76,34 +75,6 @@ internal fun DeployScreen(
             ) {
                 AppSectionCard {
                     Text("Деплой и SSH", style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
-                    // the first choice: a second server next to 2.1.9 (its clients keep working) or one in its place
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(CsqttSpacing.Xs),
-                    ) {
-                        CsqttSegmentedControl(
-                            options = listOf(
-                                DeployInstance.SIDE to "Рядом с 2.1.9",
-                                DeployInstance.MAIN to "Вместо 2.1.9",
-                            ),
-                            selected = state.instance,
-                            onSelected = { onAction(DeployAction.InstanceChanged(it)) },
-                            enabled = !state.isDeploying,
-                            modifier = Modifier.weight(1f).height(CsqttSizes.CompactControlHeight),
-                        )
-                        IconButton(
-                            onClick = { onAction(DeployAction.InstanceInfo) },
-                            enabled = !state.isDeploying,
-                            modifier = Modifier.size(26.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.HelpOutline,
-                                contentDescription = "Рядом с 2.1.9 или вместо",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
-                    }
                     if (state.sshKeysMode) {
                         AdaptiveFieldPair(
                             first = {
@@ -343,7 +314,7 @@ private fun ManualPortFields(
                 value = state.peerPort,
                 onValueChange = { onAction(DeployAction.PeerPortChanged(it)) },
                 label = "Порт туннеля",
-                placeholder = state.instance.defaultPeerPort.toString(),
+                placeholder = CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT.toString(),
                 enabled = !state.isDeploying,
                 isError = state.showValidation && !isValidPort(state.peerPort),
                 keyboardType = KeyboardType.Number,
@@ -353,21 +324,11 @@ private fun ManualPortFields(
                 value = state.webPort,
                 onValueChange = { onAction(DeployAction.WebPortChanged(it)) },
                 label = "Порт WEB-панели",
-                placeholder = state.instance.defaultWebPort.toString(),
+                placeholder = CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT.toString(),
                 enabled = !state.isDeploying,
                 isError = state.showValidation && !isValidPort(state.webPort),
                 keyboardType = KeyboardType.Number,
                 modifier = Modifier.weight(1f),
-            )
-        }
-        if (state.sideReplacesStockPorts()) {
-            Text(
-                text = resolveServerPorts(state.manualPorts, state.sshPort, state.peerPort, state.webPort, state.instance).let {
-                "Стандартные порты занимает сервер 2.1.9 — второй сервер встанет на ${it.peer} и ${it.web}"
-            },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = CsqttSpacing.Xs),
             )
         }
     }

@@ -123,6 +123,7 @@ internal fun parseDeployOutputLine(rawLine: String): DeployOutputLine? {
         raw.isEmpty() ||
             raw.startsWith("CSQTT_PROGRESS|") ||
             raw.startsWith("CSQTT_DEPLOY_ERROR|") ||
+            raw.startsWith("CSQTT_INV|") ||
             raw == "CSQTT_DEPLOY_OK" ||
             raw == "CSQTT_UNINSTALL_OK" ||
             raw == "CSQTT_DEPLOY_ROLLED_BACK" ||
@@ -558,6 +559,46 @@ private val BENIGN_STDERR = Regex(
 )
 
 private fun isBenignStderr(line: String): Boolean = BENIGN_STDERR.containsMatchIn(line)
+
+// The read-only server check (deploy.sh inventory) the app runs before it offers an install, an update or a removal.
+private const val SERVER_CHECK_TIMEOUT = 90_000L
+
+internal suspend fun performServerCheck(
+    context: Context,
+    host: String, user: String, pass: String, port: Int,
+    privateKey: String = "",
+    keyPassphrase: String = "",
+): ServerInventory = withContext(Dispatchers.IO) {
+    var ssh: SshjClient? = null
+    var script: File? = null
+    try {
+        TunnelManager.beginDeployLog("Проверка сервера $host:$port")
+        DeployManager.updateProgress(0.3f, "Проверка сервера…")
+        ssh = createSSHClient(context, host, user, pass, port, privateKey, keyPassphrase)
+        DeployManager.activeSession = ssh
+        val sshClient = DeploySSHClient(ssh, pass)
+        TunnelManager.addDeploySuccessLog("SSH-соединение установлено")
+        script = File(context.cacheDir, "csqtt-check-${System.nanoTime()}.sh")
+        context.assets.open("deploy.sh").use { input -> FileOutputStream(script).use { output -> input.copyTo(output) } }
+        sshClient.upload(script, "/tmp/deploy.sh")
+        DeployManager.updateProgress(0.6f, "Проверка сервера…")
+        val result = sshClient.execResult(rootCommand("bash /tmp/deploy.sh inventory", pass), timeout = SERVER_CHECK_TIMEOUT)
+        val inventory = parseServerInventory(result.output)
+        if (result.exitStatus != 0 || inventory == null) {
+            DeployManager.writeError("Server check failed: exit=${result.exitStatus}\n${result.output.takeLast(1200)}")
+            throw IOException(
+                deployFailureDetail(result.output)?.let { "Проверка сервера не удалась: $it" }
+                    ?: "Проверка сервера не удалась (код ${result.exitStatus}); подробности сохранены в errors.log",
+            )
+        }
+        TunnelManager.addDeploySuccessLog("Проверка сервера завершена")
+        inventory
+    } finally {
+        try { ssh?.disconnect() } catch (_: Exception) {}
+        DeployManager.activeSession = null
+        script?.delete()
+    }
+}
 
 internal suspend fun performDeploy(
     context: Context,

@@ -42,6 +42,7 @@ import com.csqtt.client.DeployManager
 import com.csqtt.client.DeploySettingsSnapshot
 import com.csqtt.client.SettingsStore
 import com.csqtt.client.TunnelManager
+import com.csqtt.client.BuildConfig
 import com.csqtt.client.CsqttConstants
 import com.csqtt.client.R
 import com.csqtt.client.ui.dialogs.DeploySecretsDialog
@@ -57,20 +58,18 @@ import com.csqtt.client.ui.design.CsqttTheme
 import com.csqtt.client.ui.utils.TUNNEL_PASSWORD_RULE
 import com.csqtt.client.ui.utils.isValidTunnelPassword
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
- * Which server a deploy installs (deploy.sh CSQTT_INSTANCE). SIDE — «Рядом с 2.1.9», the default: a second, independent
- * server (csqtt25) next to a stock 2.1.9, which keeps serving its own clients. MAIN — «Вместо 2.1.9»: the stock layout,
- * replacing whatever runs there (or updating a 2.5 server installed that way).
+ * Where a deploy installs (deploy.sh CSQTT_INSTANCE), picked by the server check (ServerCheck.kt), never by the user:
+ * MAIN — the standard place (csqtt1, /etc/csqtt, csqtt.service), SIDE — a second, independent server (csqtt25) next to
+ * an older stock one, which keeps serving its own clients.
  */
 internal enum class DeployInstance(val wire: String, val defaultPeerPort: Int, val defaultWebPort: Int) {
     SIDE("side", CsqttConstants.Network.DEFAULT_SIDE_SERVER_PEER_PORT, CsqttConstants.Network.DEFAULT_SIDE_SERVER_WEB_PORT),
-    MAIN("main", CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT, CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT);
-
-    companion object {
-        fun fromStored(value: String?): DeployInstance = entries.firstOrNull { it.wire == value } ?: SIDE
-    }
+    MAIN("main", CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT, CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT),
 }
 
 @Immutable
@@ -86,7 +85,6 @@ internal data class DeployUiState(
     val webPanelConfigured: Boolean = false,
     val sshKeysMode: Boolean = false,
     val dockerInstall: Boolean = false,
-    val instance: DeployInstance = DeployInstance.SIDE,
     val secretPathEnabled: Boolean = false,
     val secretPathUuid: String = "",
     val sshKeysFilled: Int = 0,
@@ -113,8 +111,7 @@ internal data class DeployUiState(
     val panelDisplayUrl: String
         get() {
             val h = host.ifBlank { "IP" }
-            // the panel of the server this profile points at (a side deploy stores its ports on success), not where the
-            // next deploy would go
+            // the panel of the server this profile points at (a deploy stores the server's ports on success)
             val p = resolveServerPorts(manualPorts, sshPort, peerPort, webPort).web
             val u = if (secretPathUuid.isNotBlank()) {
                 if (secretPathUuid.startsWith("/")) secretPathUuid else "/$secretPathUuid"
@@ -132,8 +129,6 @@ internal sealed interface DeployAction {
     data class ManualPortsChanged(val enabled: Boolean) : DeployAction
     data class SshKeysModeChanged(val enabled: Boolean) : DeployAction
     data class DockerInstallChanged(val enabled: Boolean) : DeployAction
-    data class InstanceChanged(val instance: DeployInstance) : DeployAction
-    data object InstanceInfo : DeployAction
     data object RegenerateSecretPath : DeployAction
     data object EditSshKeys : DeployAction
     data object DockerInfo : DeployAction
@@ -166,44 +161,20 @@ internal fun resolveServerPorts(
     sshPort: String,
     peerPort: String,
     webPort: String,
-    instance: DeployInstance = DeployInstance.MAIN,
 ): EffectiveServerPorts {
     if (!manualPorts) {
         return EffectiveServerPorts(
             ssh = CsqttConstants.Network.DEFAULT_SSH_PORT,
-            peer = instance.defaultPeerPort,
-            web = instance.defaultWebPort,
+            peer = CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT,
+            web = CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT,
         )
     }
     return EffectiveServerPorts(
-        ssh = sshPort.toIntOrNull()?.takeIf { it in 1..65535 }
-            ?: CsqttConstants.Network.DEFAULT_SSH_PORT,
-        peer = sidePort(instance, peerPort.toIntOrNull()?.takeIf { it in 1..65535 }, CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT)
-            ?: instance.defaultPeerPort,
-        web = sidePort(instance, webPort.toIntOrNull()?.takeIf { it in 1..65535 }, CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT)
-            ?: instance.defaultWebPort,
+        ssh = sshPort.toIntOrNull()?.takeIf { it in 1..65535 } ?: CsqttConstants.Network.DEFAULT_SSH_PORT,
+        peer = peerPort.toIntOrNull()?.takeIf { it in 1..65535 } ?: CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT,
+        web = webPort.toIntOrNull()?.takeIf { it in 1..65535 } ?: CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT,
     )
 }
-
-// «Рядом с 2.1.9» with "Ручные порты" on: the STOCK ports there are the 2.1.9 server's, never a choice for the second one.
-// They are what 2.5.1 prefilled for anyone who switched manual ports on (to change only the SSH port, say), and the same
-// fields are the profile's connection port, so they are not rewritten in the form — the deploy reads them as "not chosen"
-// and takes the side defaults (the form says so); a successful deploy then stores the real ones.
-private fun sidePort(instance: DeployInstance, port: Int?, stockPort: Int): Int? =
-    if (instance == DeployInstance.SIDE && port == stockPort) null else port
-
-// Switching the mode with "Ручные порты" on moves the ports still at the old mode's defaults to the new mode's (operator,
-// 2026-10-23); ports the user typed stay. These fields are also the profile's connection port, so the switch moves it too.
-internal fun portsForInstanceSwitch(from: DeployInstance, to: DeployInstance, peerPort: String, webPort: String): Pair<String, String> =
-    Pair(
-        if (peerPort == from.defaultPeerPort.toString()) to.defaultPeerPort.toString() else peerPort,
-        if (webPort == from.defaultWebPort.toString()) to.defaultWebPort.toString() else webPort,
-    )
-
-internal fun DeployUiState.sideReplacesStockPorts(): Boolean =
-    instance == DeployInstance.SIDE && manualPorts &&
-        (peerPort == CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT.toString() ||
-            webPort == CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT.toString())
 
 internal fun hasWebPanelCredentials(login: String, password: String): Boolean =
     login.isNotBlank() && password.isNotBlank()
@@ -237,7 +208,6 @@ internal fun DeployTab(
     val savedManualPorts = savedSettings.manualPortsEnabled
     val savedSshKeysMode = savedSettings.sshKeysMode
     val savedDockerInstall = savedSettings.dockerInstall
-    val savedInstance = DeployInstance.fromStored(savedSettings.deployInstance)
     val savedSshPrivateKey = savedSettings.sshPrivateKey
     val savedSshKeyPassphrase = savedSettings.sshKeyPassphrase
     val savedSshCertificate = savedSettings.sshCertificate
@@ -264,11 +234,14 @@ internal fun DeployTab(
     var portsEdited by rememberSaveable(savedSettings.profile) { mutableStateOf(false) }
     var showValidation by rememberSaveable(savedSettings.profile) { mutableStateOf(false) }
     var showSecretsDialog by rememberSaveable(savedSettings.profile) { mutableStateOf(false) }
-    var showUninstallDialog by rememberSaveable(savedSettings.profile) { mutableStateOf(false) }
     var showPanelInfoDialog by rememberSaveable(savedSettings.profile) { mutableStateOf(false) }
     var showSshKeysDialog by rememberSaveable(savedSettings.profile) { mutableStateOf(false) }
     var showDockerInfoDialog by rememberSaveable(savedSettings.profile) { mutableStateOf(false) }
-    var showInstanceInfoDialog by rememberSaveable(savedSettings.profile) { mutableStateOf(false) }
+    // the server check's result while its dialog is open (a rotation closes it: the check is run again)
+    var checkPlan by remember(savedSettings.profile) { mutableStateOf<DeployPlan?>(null) }
+    var removable by remember(savedSettings.profile) { mutableStateOf<List<FoundServer>?>(null) }
+    var pendingReplace by remember(savedSettings.profile) { mutableStateOf<PlanAction?>(null) }
+    var pendingRemove by remember(savedSettings.profile) { mutableStateOf<FoundServer?>(null) }
 
     LaunchedEffect(savedSettings.profile, savedIp) {
         if (!generalEdited) {
@@ -330,7 +303,6 @@ internal fun DeployTab(
         webPanelConfigured = hasWebPanelCredentials(savedWebLogin, savedWebPassword),
         sshKeysMode = savedSshKeysMode,
         dockerInstall = dockerInstall,
-        instance = savedInstance,
         secretPathEnabled = secretPathEnabled,
         secretPathUuid = savedSecretPathUuid,
         sshKeysFilled = if (savedSshPrivateKey.isNotBlank()) 1 else 0,
@@ -340,15 +312,48 @@ internal fun DeployTab(
         showValidation = showValidation,
     )
 
-    fun startDeploy() {
+    val sshKeyArgs = Pair(if (savedSshKeysMode) savedSshPrivateKey else "", if (savedSshKeysMode) savedSshKeyPassphrase else "")
+
+    // The read-only server check (deploy.sh inventory) every install and removal starts with: it decides what is offered.
+    fun runServerCheck(onChecked: (ServerInventory) -> Unit) {
+        if (DeployManager.isDeploying.value) return
+        val ssh = resolveServerPorts(savedManualPorts, sshPort, peerPort, webPort).ssh
+        DeployManager.startDeploy()
+        DeployManager.updateProgress(0.1f, "Проверка сервера…")
+        DeployManager.scope.launch {
+            try {
+                val inventory = performServerCheck(
+                    context = context,
+                    host = host,
+                    user = sshLogin,
+                    pass = if (savedSshKeysMode) "" else sshPassword,
+                    port = ssh,
+                    privateKey = sshKeyArgs.first,
+                    keyPassphrase = sshKeyArgs.second,
+                )
+                DeployManager.stopDeploy()
+                withContext(Dispatchers.Main) { onChecked(inventory) }
+            } catch (e: CancellationException) {
+                DeployManager.stopDeploy("Проверка отменена")
+                throw e
+            } catch (e: Exception) {
+                val message = friendlyDeployError(e.message)
+                DeployManager.writeError("Server check error (${e.javaClass.simpleName}): ${e.message}")
+                TunnelManager.addDeployErrorLog(message)
+                DeployManager.stopDeploy(message)
+                scope.launch { snackbarHostState.showSnackbar(message) }
+            }
+        }
+    }
+
+    fun startDeploy(chosen: PlanAction) {
         if (DeployManager.isDeploying.value) return
         if (!state.canInstall || !isDeployMainPasswordValid(savedMainPass)) return
-        val instance = savedInstance
+        val instance = chosen.instance
         val deployProfile = savedSettings.profile
-        val ports = resolveServerPorts(savedManualPorts, sshPort, peerPort, webPort, instance)
-        val effectiveSshPort = ports.ssh
-        val effectivePeerPort = ports.peer
-        val effectiveWebPort = ports.web
+        val effectiveSshPort = resolveServerPorts(savedManualPorts, sshPort, peerPort, webPort).ssh
+        val effectivePeerPort = chosen.peerPort
+        val effectiveWebPort = chosen.webPort
         val deployPrivateKey = if (savedSshKeysMode) savedSshPrivateKey else ""
         val deployKeyPassphrase = if (savedSshKeysMode) savedSshKeyPassphrase else ""
         val deployCertificate = if (savedSshKeysMode) savedSshCertificate else ""
@@ -357,8 +362,8 @@ internal fun DeployTab(
         scope.launch {
             settingsStore.saveDeploy(host)
             settingsStore.saveDeploySecrets(effectiveMainPass, sshLogin, sshPassword, savedWebLogin, savedWebPassword)
-            // the ports as the form holds them (they are the profile's connection port): the effective side ports are
-            // written by saveDeployedServer only once the deploy succeeded
+            // the ports as the form holds them (they are the profile's connection port): the deployed server's ports
+            // are written by saveDeployedServer only once the deploy succeeded
             if (savedManualPorts) {
                 settingsStore.savePorts(
                     peerPort.toIntOrNull()?.takeIf { it in 1..65535 } ?: effectivePeerPort,
@@ -399,7 +404,7 @@ internal fun DeployTab(
                     if (effectivePeerPort != CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT) {
                         TunnelManager.addDeployInfoLog("Подключение настроено на порт сервера $effectivePeerPort")
                     }
-                    showDeployToast(context, "Установка успешно завершена")
+                    showDeployToast(context, if (chosen.kind == PlanKind.UPDATE) "Сервер обновлён" else "Сервер установлен")
                 } else {
                     val message = DeployManager.lastResult.value.ifBlank { "Ошибка установки" }
                     scope.launch { snackbarHostState.showSnackbar(message) }
@@ -424,12 +429,11 @@ internal fun DeployTab(
         }
     }
 
-    fun startUninstall() {
+    fun startUninstall(server: FoundServer) {
         if (DeployManager.isDeploying.value) return
-        val instance = savedInstance
-        val ports = resolveServerPorts(savedManualPorts, sshPort, peerPort, webPort, instance)
-        val effectiveSshPort = ports.ssh
-        val effectivePeerPort = ports.peer
+        val instance = server.deployInstance()
+        val effectiveSshPort = resolveServerPorts(savedManualPorts, sshPort, peerPort, webPort).ssh
+        val effectivePeerPort = server.peerPortOrDefault()
         val uninstallPrivateKey = if (savedSshKeysMode) savedSshPrivateKey else ""
         val uninstallKeyPassphrase = if (savedSshKeysMode) savedSshKeyPassphrase else ""
         val uninstallCertificate = if (savedSshKeysMode) savedSshCertificate else ""
@@ -452,7 +456,7 @@ internal fun DeployTab(
                     instance = instance,
                 )
                 if (success) {
-                    showDeployToast(context, "Удаление успешно завершено")
+                    showDeployToast(context, "Сервер удалён")
                 } else {
                     val message = DeployManager.lastResult.value.ifBlank { "Ошибка удаления" }
                     scope.launch { snackbarHostState.showSnackbar(message) }
@@ -503,18 +507,6 @@ internal fun DeployTab(
                     }
                     scope.launch { settingsStore.saveManualPortsEnabled(action.enabled) }
                 }
-                is DeployAction.InstanceChanged -> {
-                    if (savedManualPorts && action.instance != savedInstance) {
-                        val (peer, web) = portsForInstanceSwitch(savedInstance, action.instance, peerPort, webPort)
-                        if (peer != peerPort || web != webPort) {
-                            peerPort = peer
-                            webPort = web
-                            portsEdited = true
-                        }
-                    }
-                    scope.launch { settingsStore.saveDeployInstance(action.instance.wire) }
-                }
-                DeployAction.InstanceInfo -> showInstanceInfoDialog = true
                 is DeployAction.SshKeysModeChanged -> scope.launch {
                     settingsStore.saveSshKeysMode(action.enabled)
                 }
@@ -544,7 +536,15 @@ internal fun DeployTab(
                 DeployAction.Install -> {
                     showValidation = true
                     if (state.canInstall) {
-                        startDeploy()
+                        runServerCheck { inventory ->
+                            checkPlan = planDeploy(
+                                inventory = inventory,
+                                manualPorts = if (savedManualPorts) resolveServerPorts(true, sshPort, peerPort, webPort) else null,
+                                profilePeerPort = resolveServerPorts(savedManualPorts, sshPort, peerPort, webPort).peer,
+                                dockerInstall = dockerInstall,
+                                appVersion = BuildConfig.VERSION_NAME.removePrefix("v"),
+                            )
+                        }
                     } else {
                         if (!state.mainPasswordConfigured) {
                             scope.launch { snackbarHostState.showSnackbar("Пароль туннеля: $TUNNEL_PASSWORD_RULE") }
@@ -559,7 +559,7 @@ internal fun DeployTab(
                         }
                     }
                 }
-                DeployAction.Uninstall -> if (state.canUninstall) showUninstallDialog = true
+                DeployAction.Uninstall -> if (state.canUninstall) runServerCheck { removable = removableServers(it) }
                 DeployAction.PanelInfo -> showPanelInfoDialog = true
                 DeployAction.OpenControlPanel -> {
                     if (host.isBlank()) {
@@ -602,13 +602,85 @@ internal fun DeployTab(
         )
     }
 
-    if (showUninstallDialog) {
+    val profilePeer = resolveServerPorts(savedManualPorts, sshPort, peerPort, webPort).peer
+    checkPlan?.let { plan ->
+        ServerCheckDialog(
+            title = "На сервере",
+            servers = plan.servers.map { describeServer(it, profilePeer) },
+            emptyText = "csqtt не найден — сервер чистый",
+            notes = plan.notes,
+            choices = plan.actions.mapIndexed { index, action ->
+                CheckChoice(
+                    action.title,
+                    action.detail,
+                    when {
+                        action.destructive -> CheckChoiceStyle.DESTRUCTIVE
+                        index == 0 -> CheckChoiceStyle.RECOMMENDED
+                        else -> CheckChoiceStyle.OTHER
+                    },
+                )
+            },
+            onChoose = { index ->
+                val action = plan.actions[index]
+                checkPlan = null
+                if (action.destructive) pendingReplace = action else startDeploy(action)
+            },
+            onDismiss = { checkPlan = null },
+        )
+    }
+    pendingReplace?.let { action ->
+        AlertDialog(
+            onDismissRequest = { pendingReplace = null },
+            title = { Text("Заменить сервер?") },
+            text = { Text(action.detail) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingReplace = null
+                        startDeploy(action)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                ) { Text("Заменить") }
+            },
+            dismissButton = { TextButton(onClick = { pendingReplace = null }) { Text("Отмена") } },
+        )
+    }
+    removable?.let { servers ->
+        ServerCheckDialog(
+            title = "Удаление с сервера",
+            servers = emptyList(),
+            emptyText = "Серверов, установленных этим приложением, здесь нет",
+            notes = emptyList(),
+            choices = servers.map { server ->
+                val (name, detail) = describeServer(server, profilePeer)
+                CheckChoice("Удалить: $name", detail, CheckChoiceStyle.DESTRUCTIVE)
+            },
+            onChoose = { index ->
+                pendingRemove = servers[index]
+                removable = null
+            },
+            onDismiss = { removable = null },
+        )
+    }
+    pendingRemove?.let { server ->
+        val (name, _) = describeServer(server, profilePeer)
         UninstallConfirmDialog(
-            instance = savedInstance,
-            onDismiss = { showUninstallDialog = false },
+            title = "Удаление: $name",
+            text = if (server.place == ServerPlace.SIDE) {
+                "Будет удалён второй сервер csqtt25: его бинарник, сервис или контейнер и только его правила firewall/NAT. " +
+                    "Остальное на этом VPS не затрагивается. База пользователей остаётся в /etc/csqtt25.\n\nЭто действие необратимо."
+            } else {
+                "Будут удалены: бинарник, systemd-сервис или контейнер, конфигурация CSQTT и только помеченные правила " +
+                    "firewall/NAT для CSQTT. Второй сервер (csqtt25), если он есть, не затрагивается. База пользователей " +
+                    "остаётся в /etc/csqtt.\n\nЭто действие необратимо."
+            },
+            onDismiss = { pendingRemove = null },
             onConfirm = {
-                showUninstallDialog = false
-                startUninstall()
+                pendingRemove = null
+                startUninstall(server)
             },
         )
     }
@@ -630,9 +702,6 @@ internal fun DeployTab(
         )
     }
 
-    if (showInstanceInfoDialog) {
-        DeployInstanceInfoDialog(onDismiss = { showInstanceInfoDialog = false })
-    }
     if (showDockerInfoDialog) {
         DockerInstallInfoDialog(onDismiss = { showDockerInfoDialog = false })
     }

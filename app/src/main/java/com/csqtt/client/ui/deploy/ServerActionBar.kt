@@ -88,7 +88,11 @@ internal fun ServerActionBar(
                     Spacer(Modifier.width(6.dp))
                 }
                 Text(
-                    if (state.isDeploying) "Установка…" else "Установить",
+                    when {
+                        !state.isDeploying -> "Установить"
+                        state.currentStep.startsWith("Проверка") -> "Проверка…"
+                        else -> "Установка…"
+                    },
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                 )
