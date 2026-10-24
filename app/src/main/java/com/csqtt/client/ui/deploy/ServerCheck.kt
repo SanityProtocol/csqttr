@@ -152,7 +152,10 @@ internal fun planDeploy(
     val leftovers = servers.filter { it.place == ServerPlace.LEFTOVER }
     for (other in others) {
         notes += "Ещё один сервер csqtt установлен не этим приложением (${other.name}" +
-            (other.peerPort?.let { ", порт $it" } ?: "") + "). Приложение его не трогает"
+            (other.peerPort?.let { ", порт $it" } ?: "") + "). Приложение его не трогает" +
+            // what the user can do: the standard place's cleanup would stop it, so its actions are withheld
+            if (liveStandard != null) ". Пока он работает, обновить или заменить сервер на стандартном месте нельзя — " +
+                "это остановило бы и его. Остановите его и проверьте сервер заново" else ""
     }
 
     val wanted = if (dockerInstall) "docker" else "systemd"

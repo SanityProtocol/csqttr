@@ -98,7 +98,8 @@ class ServerCheckTest {
         val other = server("other", "2.5.0", 47000, 47002, name = "csqtt47.service")
         val p = plan(inv(std250, other))
         assertTrue(p.actions.isEmpty())
-        assertTrue(p.notes.single().contains("csqtt47.service"))
+        assertTrue(p.notes.single().contains("csqtt47.service") && p.notes.single().contains("Остановите его"))
+        assertFalse(plan(inv(other)).notes.single().contains("Остановите его"))
         assertEquals(listOf("INSTALL_NEXT_TO:SIDE:46100/46102"), plan(inv(std21, other)).kinds())
         assertEquals(listOf("INSTALL:SIDE:46100/46102"), plan(inv(other)).kinds())
         // a stopped one the standard place's cleanup removes is said so
