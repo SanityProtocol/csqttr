@@ -48,7 +48,9 @@ import com.csqtt.client.ui.appSectionCardBorderColor
 import com.csqtt.client.ui.appSectionCardColor
 import com.csqtt.client.ui.design.CsqttShapes
 import com.csqtt.client.ui.design.CsqttSizes
+import com.csqtt.client.ui.utils.TUNNEL_PASSWORD_RULE
 import com.csqtt.client.ui.utils.generate16CharPassword
+import com.csqtt.client.ui.utils.isValidTunnelPassword
 import kotlinx.coroutines.launch
 
 @Composable
@@ -130,13 +132,12 @@ fun DeploySecretsDialog(
                 )
 
                 val allowedChars = Regex("^[a-zA-Z0-9]+$")
-                val is16AlphaNum = Regex("^[a-zA-Z0-9]{16}$")
                 val invalidHint: @Composable () -> Unit = {
                     Text("Разрешена «Латиница» и «Цифры»", color = MaterialTheme.colorScheme.error)
                 }
                 val isWebLoginValid = webLoginInput.isNotEmpty() && webLoginInput.matches(allowedChars)
                 val isWebPassValid = webPassInput.isNotEmpty() && webPassInput.matches(allowedChars)
-                val isMainPassValid = mainPassInput.length == 16 && mainPassInput.matches(is16AlphaNum)
+                val isMainPassValid = isValidTunnelPassword(mainPassInput)
 
                 Text(
                     text = "Пароль подключения к туннелю",
@@ -148,16 +149,16 @@ fun DeploySecretsDialog(
                 OutlinedTextField(
                     value = mainPassInput,
                     onValueChange = { 
-                        mainPassInput = it.filter { c -> !c.isWhitespace() }.take(16)
+                        mainPassInput = it.filter { c -> !c.isWhitespace() }
                     },
-                    label = { Text("Пароль туннеля (16 символов)", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) },
-                    placeholder = { Text("16 символов", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) },
+                    label = { Text("Пароль туннеля", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) },
+                    placeholder = { Text("укажите или сгенерируйте", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = CsqttShapes.Control,
                     isError = !isMainPassValid,
                     supportingText = if (mainPassInput.isNotEmpty() && !isMainPassValid) {
-                        { Text("Требуется ровно 16 символов [0-9A-Za-z]", color = MaterialTheme.colorScheme.error) }
+                        { Text(TUNNEL_PASSWORD_RULE, color = MaterialTheme.colorScheme.error) }
                     } else null,
                     trailingIcon = {
                         IconButton(onClick = { mainPassInput = generate16CharPassword() }) {

@@ -24,6 +24,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.csqtt.client.SettingsStore
+import com.csqtt.client.ui.utils.TUNNEL_PASSWORD_RULE
+import com.csqtt.client.ui.utils.isValidTunnelPassword
 import kotlinx.coroutines.launch
 import com.csqtt.client.ui.design.CsqttShapes
 import com.csqtt.client.ui.design.CsqttSizes
@@ -92,7 +94,7 @@ fun SecretsDialog(
                     }
                 }
 
-                val isPasswordValid = passwordInput.isNotEmpty() && passwordInput.matches(Regex("^[a-zA-Z0-9_.!?:#/-]+$"))
+                val isPasswordValid = isValidTunnelPassword(passwordInput)
 
                 OutlinedTextField(
                     value = passwordInput,
@@ -102,7 +104,7 @@ fun SecretsDialog(
                     singleLine = true,
                     isError = !isPasswordValid,
                     supportingText = if (passwordInput.isNotEmpty() && !isPasswordValid) {
-                        { Text("Разрешены только буквы, цифры и знаки . ! ? : # - _ /", color = MaterialTheme.colorScheme.error) }
+                        { Text(TUNNEL_PASSWORD_RULE, color = MaterialTheme.colorScheme.error) }
                     } else null,
                     modifier = Modifier.fillMaxWidth(),
                     shape = CsqttShapes.Control,

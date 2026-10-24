@@ -1,11 +1,14 @@
 package com.csqtt.client.ui
 
+import com.csqtt.client.ui.utils.decryptCsqttPayload
 import com.csqtt.client.ui.utils.encryptCsqttPayload
 import com.csqtt.client.ui.utils.formatCsqttLink
 import com.csqtt.client.ui.utils.generate16CharPassword
+import com.csqtt.client.ui.utils.isValidTunnelPassword
 import com.csqtt.client.ui.utils.parseCsqttLink
 import com.csqtt.client.ui.utils.peerAddress
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -71,6 +74,35 @@ class CsqttLinkTest {
         assertEquals(46000, link.port)
         assertEquals("SecretPass123456", link.password)
         assertEquals(listOf("abcdefghijklmnop1"), link.hashes)
+    }
+
+    @Test
+    fun formatsAnyValidPasswordSoItParsesBack() {
+        for (pass in listOf("Пароль-туннеля", "p#ss&w=rd?x", "100%+plus;semi/slash:colon!", "a".repeat(128), "ж".repeat(64))) {
+            val link = parseCsqttLink(formatCsqttLink("203.0.113.7", 46000, pass))
+            requireNotNull(link) { pass }
+            assertEquals(pass, link.password)
+        }
+    }
+
+    @Test
+    fun aLettersAndDigitsPasswordIsWrittenAsBefore() {
+        val plain = decryptCsqttPayload(formatCsqttLink("203.0.113.7", 46000, "SecretPass123456").removePrefix("csqtt://"))
+        assertEquals("connect?v=2&host=203.0.113.7&peer=46000&password=SecretPass123456", plain)
+    }
+
+    @Test
+    fun tunnelPasswordRuleIsTheServers() {
+        assertTrue(isValidTunnelPassword("Пароль18символовЁё"))
+        assertTrue(isValidTunnelPassword("a".repeat(128)))
+        assertTrue(isValidTunnelPassword("ж".repeat(64)))
+        assertFalse(isValidTunnelPassword("a".repeat(129)))
+        assertFalse(isValidTunnelPassword("ж".repeat(65)))
+        assertFalse(isValidTunnelPassword(""))
+        assertFalse(isValidTunnelPassword("a|b"))
+        assertFalse(isValidTunnelPassword("a b"))
+        assertFalse(isValidTunnelPassword("a\tb"))
+        assertFalse(isValidTunnelPassword("a\u0000b"))
     }
 
     @Test

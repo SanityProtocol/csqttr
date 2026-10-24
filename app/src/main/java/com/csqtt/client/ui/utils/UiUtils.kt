@@ -216,6 +216,17 @@ fun stripVkUrlStatic(input: String): String {
     return s.trimEnd('/')
 }
 
+// The server takes the password out of "GETCONF:port|password|…" (split on '|', each field trimmed) and accepts 1..128
+// bytes; the rest of the way it is only bytes (HKDF, the TURN digest), so any other character is fine, Cyrillic too.
+const val TUNNEL_PASSWORD_MAX_BYTES = 128
+
+fun isValidTunnelPassword(password: String): Boolean =
+    password.isNotEmpty() &&
+        password.toByteArray(Charsets.UTF_8).size <= TUNNEL_PASSWORD_MAX_BYTES &&
+        password.none { it == '|' || it.isWhitespace() || it.isISOControl() }
+
+const val TUNNEL_PASSWORD_RULE = "Без пробелов и «|», не длиннее 128 байт (64 буквы кириллицей)"
+
 fun generate16CharPassword(): String {
     val chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
     val random = java.security.SecureRandom()
@@ -233,7 +244,7 @@ fun formatCsqttLink(
     hashes: List<String> = emptyList(),
     token: String = "",
 ): String {
-    val queryParts = mutableListOf("v=2", "host=$host", "peer=$peer", "password=$password")
+    val queryParts = mutableListOf("v=2", "host=$host", "peer=$peer", "password=" + java.net.URLEncoder.encode(password, Charsets.UTF_8.name()))
     if (hashes.isNotEmpty()) {
         queryParts.add("hashes=" + hashes.joinToString("+"))
     } else if (token.isNotEmpty()) {
