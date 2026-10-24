@@ -125,7 +125,7 @@ fun DeploySecretsDialog(
                 }
 
                 Text(
-                    text = "Придумайте логин и пароль для web панели и пароль туннеля — латиница и цифры.",
+                    text = "Придумайте логин и пароль для web панели (латиница и цифры) и пароль туннеля.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 15.sp,
