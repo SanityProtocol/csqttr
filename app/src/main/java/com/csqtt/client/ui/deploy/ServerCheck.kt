@@ -187,7 +187,8 @@ internal fun planDeploy(
             server.peerPort ?: instance.defaultPeerPort, server.webPort ?: instance.defaultWebPort,
             title,
             "csqtt ${server.version ?: "?"} → $appVersion на порту ${server.peerPort ?: instance.defaultPeerPort}. " +
-                "Клиенты и настройки сохранятся." + runtimeChange(server) + if (main) removed else "",
+                "Клиенты и настройки сохранятся; пароль туннеля и вход в web-панель — из «Авторизации» этого профиля." +
+                runtimeChange(server) + if (main) removed else "",
         )
     }
     fun newServer(kind: PlanKind, instance: DeployInstance, title: String, detail: (Int, Int) -> String) {
@@ -215,7 +216,8 @@ internal fun planDeploy(
                     liveStandard.webPort ?: DeployInstance.MAIN.defaultWebPort,
                     "Заменить",
                     "$old заменяется на $appVersion на тех же портах. Клиенты и пароли сохранятся, но приложения 2.1 " +
-                        "перестанут подключаться — им нужно приложение 2.5." + runtimeChange(liveStandard) + removed,
+                        "перестанут подключаться — им нужно приложение 2.5. Пароль туннеля и вход в web-панель — из " +
+                        "«Авторизации» этого профиля." + runtimeChange(liveStandard) + removed,
                 )
             }
         }
@@ -234,9 +236,33 @@ internal fun planDeploy(
     return DeployPlan(servers, actions, notes)
 }
 
-/** The servers «Удалить» may remove: the two places this app installs into, with something installed there. */
-internal fun removableServers(inventory: ServerInventory): List<FoundServer> =
-    inventory.servers.filter { (it.place == ServerPlace.STANDARD || it.place == ServerPlace.SIDE) && it.installed }
+/**
+ * The servers «Удалить» may remove: the two places this app installs into, with something installed there. Removing the
+ * standard place runs the stock cleanup, which stops and deletes every csqtt it matches — withheld while a server this
+ * app did not install, or swg-panel's, runs (the second server's removal touches only its own names).
+ */
+internal fun removableServers(inventory: ServerInventory): List<FoundServer> {
+    val foreign = inventory.servers.any { it.place == ServerPlace.OTHER || it.place == ServerPlace.PANEL }
+    return inventory.servers.filter {
+        it.installed && (it.place == ServerPlace.SIDE || (it.place == ServerPlace.STANDARD && !foreign))
+    }
+}
+
+/** What the removal list says beside the servers: why the standard one is withheld, what else its removal deletes. */
+internal fun removalNotes(inventory: ServerInventory): List<String> {
+    val notes = mutableListOf<String>()
+    val standard = inventory.servers.any { it.place == ServerPlace.STANDARD && it.installed }
+    val foreign = inventory.servers.filter { it.place == ServerPlace.OTHER || it.place == ServerPlace.PANEL }
+    if (standard && foreign.isNotEmpty()) {
+        notes += "Сервер на стандартном месте не удалить, пока работает ${foreign.joinToString { it.name }}: удаление " +
+            "остановило бы и его"
+    }
+    val leftovers = inventory.servers.filter { it.place == ServerPlace.LEFTOVER }
+    if (standard && foreign.isEmpty() && leftovers.isNotEmpty()) {
+        notes += "Вместе с сервером на стандартном месте будет удалено: ${leftovers.joinToString { it.name }}"
+    }
+    return notes
+}
 
 internal fun FoundServer.deployInstance(): DeployInstance =
     if (place == ServerPlace.SIDE) DeployInstance.SIDE else DeployInstance.MAIN

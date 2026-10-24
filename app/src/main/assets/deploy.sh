@@ -2664,6 +2664,12 @@ csqtt_instance_installed() {
 do_uninstall() {
     log_step "Удаление CSQTT..."
     csqtt_instance_installed || die "Сервер ${CSQTT_NAME} на этом VPS не установлен — удалять нечего"
+    if [ "$CSQTT_ROLE" = main ]; then
+        # this removal's cleanup stops, kills and deletes every csqtt unit, container and process it matches
+        local strangers
+        strangers="$(main_place_strangers | cut -d'|' -f2 | paste -sd ',' - | sed 's/,/, /g' || true)"
+        [ -z "$strangers" ] || die "Здесь работает ещё один сервер csqtt, установленный не этим приложением: ${strangers}. Удаление стандартного сервера остановило бы и удалило его — отменено" "$EXIT_PREFLIGHT_FAILED"
+    fi
 
     remove_all_csqtt_docker_containers
     if command -v docker >/dev/null 2>&1; then
@@ -2744,7 +2750,8 @@ main_install_csqtt_version() {
     fi
     if [ -n "$pid" ] && [ "$pid" != 0 ] && [ -e "/proc/$pid/exe" ]; then
         exe="/proc/$pid/exe"
-    elif [ -f /usr/local/bin/csqtt ]; then
+    elif [ -f /usr/local/bin/csqtt ] && { [ "$(systemctl show --value -p LoadState csqtt 2>/dev/null || true)" = loaded ] || \
+            { command -v docker >/dev/null 2>&1 && docker inspect csqtt >/dev/null 2>&1; }; }; then
         exe=/usr/local/bin/csqtt
     else
         return 0
@@ -2778,6 +2785,15 @@ server_ports_in() {
 
 pid_args() { { tr '\0' ' ' < "/proc/$1/cmdline"; } 2>/dev/null || true; }
 
+# Running for the purpose of "is it someone's live server": active, or activating — a unit between crash restarts
+# ("activating (auto-restart)") is a running server, not a stopped leftover.
+unit_live() {
+    case "$(systemctl show --value -p ActiveState "$1" 2>/dev/null || true)" in
+        active|activating|reloading) return 0 ;;
+    esac
+    return 1
+}
+
 docker_id() { command -v docker >/dev/null 2>&1 && docker inspect --format '{{.Id}}' "$1" 2>/dev/null || true; }
 
 # Is PID $1 in one of these units or containers? By cgroup: a hand-made server runs the same /usr/local/bin/csqtt, only
@@ -2799,7 +2815,7 @@ main_place_strangers() {
     while IFS= read -r unit; do
         [ -n "$unit" ] || continue
         case " $STANDARD_PLACE_UNITS " in *" $unit "*) continue ;; esac
-        systemctl is-active --quiet "$unit" 2>/dev/null || continue
+        unit_live "$unit" || continue
         strange_units="$strange_units $unit"
         printf 'systemd|%s|%s\n' "$unit" "$(systemctl show --value -p MainPID "$unit" 2>/dev/null || true)"
     done < <(list_csqtt_systemd_units)
@@ -2865,7 +2881,7 @@ inv_place() {
 
 do_inventory() {
     [ "$CSQTT_ROLE" = main ] || die "inventory запускается без CSQTT_INSTANCE"
-    local runtime name pid unit iface listen exe ver peer web spec proto port holders
+    local runtime name pid unit iface listen exe ver peer web spec proto port holders args
     inv_place standard csqtt.service csqtt /usr/local/bin/csqtt /etc/csqtt '(/usr/local/bin/csqtt|/usr/local/lib/csqtt/)'
     inv_place side csqtt25.service csqtt25 /usr/local/lib/csqtt25/csqtt25 /etc/csqtt25 '/usr/local/lib/csqtt25/'
     if command -v systemctl >/dev/null 2>&1; then
@@ -2883,17 +2899,41 @@ do_inventory() {
         [ -n "$runtime" ] || continue
         exe=""; [ -n "$pid" ] && [ "$pid" != 0 ] && [ -e "/proc/$pid/exe" ] && exe="/proc/$pid/exe"
         ver="$( [ -n "$exe" ] && binary_version_label "$exe" || true)"
-        read -r peer web <<<"$(server_ports_in "$( [ -n "$exe" ] && pid_args "$pid" || true)")"
+        if [ -n "$exe" ]; then
+            args="$(pid_args "$pid")"
+        elif [ "$runtime" = systemd ]; then
+            # between crash restarts there is no process: its unit's command line says the ports
+            args="$(systemctl show --value -p ExecStart "$name" 2>/dev/null | sed -n 's/.*argv\[\]=\([^;]*\);.*/\1/p' | head -n1 || true)"
+        else
+            args=""
+        fi
+        read -r peer web <<<"$(server_ports_in "$args")"
         inv_line server place=other "runtime=$runtime" state=running "version=${ver:-?}" "peer=$peer" "web=$web" "name=$name"
     done < <(main_place_strangers)
     # stopped units with the stock paths outside the standard place's: main mode deletes them as today — named here
     while IFS= read -r unit; do
         [ -n "$unit" ] || continue
         case " $STANDARD_PLACE_UNITS " in *" $unit "*) continue ;; esac
-        systemctl is-active --quiet "$unit" 2>/dev/null && continue
+        unit_live "$unit" && continue
         read -r peer web <<<"$(server_ports_in "$(systemctl show --value -p ExecStart "$unit" 2>/dev/null | sed -n 's/.*argv\[\]=\([^;]*\);.*/\1/p' | head -n1 || true)")"
         inv_line server place=leftover runtime=systemd state=stopped version=? "peer=$peer" "web=$web" "name=$unit"
     done < <(list_csqtt_systemd_units)
+    # stopped containers running the stock binary: the standard place's cleanup removes them too (docker ps -a)
+    if command -v docker >/dev/null 2>&1; then
+        while IFS= read -r name; do
+            case "$name" in ''|csqtt|csqtt25) continue ;; esac
+            docker_container_runs_csqtt "$name" || continue
+            read -r peer web <<<"$(server_ports_in "$(docker inspect --format '{{.Path}} {{join .Args " "}}' "$name" 2>/dev/null || true)")"
+            inv_line server place=leftover runtime=docker state=stopped version=? "peer=$peer" "web=$web" "name=$name"
+        done < <(docker ps -a --filter status=exited --filter status=created --format '{{.Names}}' 2>/dev/null || true)
+    fi
+    # swg-panel's Docker node: its csqtt runs inside the swg-node container from /var/lib/swg-noded
+    for pid in $(grep -l -s -F '/var/lib/swg-noded/' /proc/[0-9]*/cmdline 2>/dev/null | cut -d/ -f3 | sort -un || true); do
+        case "$(pid_args "$pid")" in *csqtt*--*) ;; *) continue ;; esac
+        read -r peer web <<<"$(server_ports_in "$(pid_args "$pid")")"
+        inv_line server place=panel runtime=docker state=running "version=$(binary_version_label "/proc/$pid/exe" || true)" \
+            "peer=$peer" web=? "name=swg-node $(cat "/proc/$pid/comm" 2>/dev/null || echo csqtt)"
+    done
     # the default ports, when something that is not a csqtt server holds them
     for spec in u:46000 t:46002 u:46100 t:46102; do
         proto="${spec%%:*}"; port="${spec#*:}"; holders=""

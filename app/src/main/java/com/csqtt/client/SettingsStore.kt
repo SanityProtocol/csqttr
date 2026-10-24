@@ -1059,9 +1059,11 @@ class SettingsStore(context: Context) {
         }
     }
 
-    suspend fun saveConnectionPassword(password: String) {
+    // [forProfile]: a deploy writes into the profile that started it, as saveDeployedServer does — the active one may
+    // have changed during the minutes it ran
+    suspend fun saveConnectionPassword(password: String, forProfile: Int? = null) {
         dataStore.edit { prefs ->
-            val profile = prefs[ACTIVE_PROFILE] ?: 0
+            val profile = forProfile ?: prefs[ACTIVE_PROFILE] ?: 0
             val localKey = getProfileKey(CONNECTION_PASSWORD_LOCAL, profile)
             val legacyKey = getProfileKey(CONNECTION_PASSWORD, profile)
             val encryptedKey = getProfileKey(CONNECTION_PASSWORD_ENCRYPTED, profile)
@@ -1575,7 +1577,8 @@ class SettingsStore(context: Context) {
             deploy.put("secondary_vk_hash", prefs[getProfileKey(SECONDARY_VK_HASH, p)] ?: "")
             deploy.put("vk_auth_mode", prefs[getProfileKey(VK_AUTH_MODE, p)] ?: CsqttConstants.VkAuth.MODE_CALLS)
             deploy.put("vk_hash_mode", prefs[getProfileKey(VK_HASH_MODE, p)] ?: CsqttConstants.VkAutoHash.MODE_MANUAL)
-            deploy.put("vk_access_token", readSecret(prefs, VK_ACCESS_TOKEN_ENCRYPTED, VK_ACCESS_TOKEN, p))
+            // the VK access token is a VK account credential: it stays on this device (an export goes to the clipboard
+            // and Downloads). Exports before 2.5.2 carried it blank in practice; the import below leaves a stored one alone.
             deploy.put("workers_per_hash", prefs[getProfileKey(WORKERS_PER_HASH, p)] ?: 18)
             deploy.put("extra_workers", prefs[getProfileKey(EXTRA_WORKERS, p)] ?: false)
             deploy.put("csqtt_link", prefs[getProfileKey(CSQTT_LINK, p)] ?: "")
@@ -1639,11 +1642,12 @@ class SettingsStore(context: Context) {
                     if (tunnel.has("listen_port")) mutable[getProfileKey(LISTEN_PORT, p)] = tunnel.getInt("listen_port")
                     if (tunnel.has("manual_ports_enabled")) mutable[getProfileKey(MANUAL_PORTS_ENABLED, p)] = tunnel.getBoolean("manual_ports_enabled")
                     if (tunnel.has("server_peer_port")) mutable[getProfileKey(SERVER_PEER_PORT, p)] = tunnel.getInt("server_peer_port")
-                    if (tunnel.has("connection_password")) {
-                        val pw = tunnel.getString("connection_password")
+                    // a blank password in an export is "none in that export" (older exports carried a stored one blank):
+                    // it never wipes the password this profile has
+                    val pw = if (tunnel.has("connection_password")) tunnel.getString("connection_password") else ""
+                    if (pw.isNotBlank()) {
                         // as saveConnectionPassword stores it
-                        if (pw.isBlank()) mutable.remove(getProfileKey(CONNECTION_PASSWORD_LOCAL, p))
-                        else mutable[getProfileKey(CONNECTION_PASSWORD_LOCAL, p)] = pw
+                        mutable[getProfileKey(CONNECTION_PASSWORD_LOCAL, p)] = pw
                         mutable.remove(getProfileKey(CONNECTION_PASSWORD, p))
                         mutable.remove(getProfileKey(CONNECTION_PASSWORD_ENCRYPTED, p))
                     }
@@ -1666,7 +1670,10 @@ class SettingsStore(context: Context) {
                     if (deploy.has("secondary_vk_hash")) mutable[getProfileKey(SECONDARY_VK_HASH, p)] = deploy.getString("secondary_vk_hash")
                     if (deploy.has("vk_auth_mode")) mutable[getProfileKey(VK_AUTH_MODE, p)] = deploy.getString("vk_auth_mode")
                     if (deploy.has("vk_hash_mode")) mutable[getProfileKey(VK_HASH_MODE, p)] = deploy.getString("vk_hash_mode")
-                    if (deploy.has("vk_access_token")) mutable.putSecret(VK_ACCESS_TOKEN_ENCRYPTED, VK_ACCESS_TOKEN, deploy.getString("vk_access_token"), p)
+                    // blank (every export before 2.5.2) leaves the stored token alone; exports no longer carry it
+                    deploy.optString("vk_access_token").takeIf { it.isNotBlank() }?.let {
+                        mutable.putSecret(VK_ACCESS_TOKEN_ENCRYPTED, VK_ACCESS_TOKEN, it, p)
+                    }
                     if (deploy.has("workers_per_hash")) mutable[getProfileKey(WORKERS_PER_HASH, p)] = deploy.getInt("workers_per_hash")
                     if (deploy.has("extra_workers")) mutable[getProfileKey(EXTRA_WORKERS, p)] = deploy.getBoolean("extra_workers")
                     if (deploy.has("csqtt_link")) mutable[getProfileKey(CSQTT_LINK, p)] = deploy.getString("csqtt_link")

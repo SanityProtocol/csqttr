@@ -224,14 +224,10 @@ class TunVpnService : VpnService() {
                     } else {
                         val settingsStore = SettingsStore(applicationContext)
                         ipWhite = settingsStore.ipIsWhitelist.first()
-                        // only with IP routing switched on: saved IPs bypassed the VPN with the switch off
-                        ipListStr = if (!settingsStore.ipRoutingEnabled.first()) {
-                            ""
-                        } else if (ipWhite) {
-                            settingsStore.directIpsWhite.first()
-                        } else {
-                            settingsStore.directIpsBlack.first()
-                        }
+                        // IP routing is on exactly when the list is non-empty: the UI has no off switch (saving IPs sets
+                        // ipRoutingEnabled, nothing clears it; configs from before it have none), so the list is the intent
+                        // — the same rule as the client's command line (TunnelManager) and every TunnelParams builder
+                        ipListStr = if (ipWhite) settingsStore.directIpsWhite.first() else settingsStore.directIpsBlack.first()
                     }
 
                     if (!ipWhite && ipListStr.isNotBlank()) {

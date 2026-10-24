@@ -240,6 +240,7 @@ internal fun DeployTab(
     // the server check's result while its dialog is open (a rotation closes it: the check is run again)
     var checkPlan by remember(savedSettings.profile) { mutableStateOf<DeployPlan?>(null) }
     var removable by remember(savedSettings.profile) { mutableStateOf<List<FoundServer>?>(null) }
+    var removeNotes by remember(savedSettings.profile) { mutableStateOf<List<String>>(emptyList()) }
     var pendingReplace by remember(savedSettings.profile) { mutableStateOf<PlanAction?>(null) }
     var pendingRemove by remember(savedSettings.profile) { mutableStateOf<FoundServer?>(null) }
 
@@ -397,7 +398,7 @@ internal fun DeployTab(
                 )
                 if (success) {
                     passwordToSynchronizeAfterDeploy(success, effectiveMainPass)?.let { mainPassword ->
-                        settingsStore.saveConnectionPassword(mainPassword)
+                        settingsStore.saveConnectionPassword(mainPassword, deployProfile)
                         TunnelManager.addDeployInfoLog("Пароль подключения синхронизирован с паролем сервера")
                     }
                     settingsStore.saveDeployedServer(deployProfile, host, effectivePeerPort, effectiveWebPort)
@@ -567,7 +568,7 @@ internal fun DeployTab(
                         }
                     }
                 }
-                DeployAction.Uninstall -> if (state.canUninstall) runServerCheck { removable = removableServers(it) }
+                DeployAction.Uninstall -> if (state.canUninstall) runServerCheck { removable = removableServers(it); removeNotes = removalNotes(it) }
                 DeployAction.PanelInfo -> showPanelInfoDialog = true
                 DeployAction.OpenControlPanel -> {
                     if (host.isBlank()) {
@@ -660,8 +661,8 @@ internal fun DeployTab(
         ServerCheckDialog(
             title = "Удаление с сервера",
             servers = emptyList(),
-            emptyText = if (servers.isEmpty()) "Серверов, установленных этим приложением, здесь нет" else "",
-            notes = emptyList(),
+            emptyText = if (servers.isEmpty() && removeNotes.isEmpty()) "Серверов, установленных этим приложением, здесь нет" else "",
+            notes = removeNotes,
             choices = servers.map { server ->
                 val (name, detail) = describeServer(server, profilePeer)
                 CheckChoice("Удалить: $name", detail, CheckChoiceStyle.DESTRUCTIVE)

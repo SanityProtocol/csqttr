@@ -348,6 +348,11 @@ class DeployScriptPreflightTest {
         // that kind that is not the standard place's own is refused before it runs
         val preflight = body("main_preflight")
         assertTrue(preflight.contains("main_place_strangers"))
+        // removing the standard place runs the same cleanup: refused the same way, before anything stops
+        val uninstall = body("do_uninstall")
+        assertTrue(uninstall.indexOf("main_place_strangers") in 0 until uninstall.indexOf("remove_all_csqtt_docker_containers"))
+        // a unit between crash restarts is a running server, not a stopped leftover
+        assertTrue(body("main_place_strangers").contains("unit_live"))
         val install = deploy.substringAfter("install|--install|-i)")
         assertTrue(install.indexOf("main_preflight") in 0 until install.indexOf("csqtt_cleanup"))
         // 2.1.9's cascade helper (/usr/local/bin/csqtt-cascade) matches the stock pattern but is the standard place's own

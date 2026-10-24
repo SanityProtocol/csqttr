@@ -230,7 +230,7 @@ class TunnelService : Service() {
                         val hasDomains = if (domainWhite) domainList.isNotBlank() else (domainList.isNotBlank() || store.templateDomainsEnabled.first() || store.excludeRuZonesEnabled.first())
                         val effectiveDomainEnabled = store.domainRoutingEnabled.first() && hasDomains
                         val hasIps = ipList.isNotBlank()
-                        val effectiveIpEnabled = store.ipRoutingEnabled.first() && hasIps
+                        val effectiveIpEnabled = hasIps   // the list is the switch (TunVpnService)
 
                         val params = TunnelParams(
                             peer = intent.getStringExtra("peer") ?: "",
@@ -449,7 +449,7 @@ class TunnelService : Service() {
                 val domainList = if (domainWhite) store.directDomainsWhite.first() else store.directDomainsBlack.first()
                 val ipWhite = store.ipIsWhitelist.first()
                 val ipList = if (ipWhite) store.directIpsWhite.first() else store.directIpsBlack.first()
-                val ipRouting = store.ipRoutingEnabled.first() || ipList.isNotBlank()
+                val ipRouting = ipList.isNotBlank()   // the list is the switch (TunVpnService)
 
                 val params = TunnelParams(
                     peer = source.peer,

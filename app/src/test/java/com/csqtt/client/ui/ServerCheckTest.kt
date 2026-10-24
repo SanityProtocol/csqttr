@@ -118,11 +118,28 @@ class ServerCheckTest {
     }
 
     @Test
-    fun `removal offers only what this app installs`() {
-        val all = inv(std21, side252, storeOnly, server("panel", "2.5.0", 56100, 56102, name = "swg-csqtt-csqtt2.service"),
-            server("other", "?", 47000, 47002, name = "pid 7"))
-        assertEquals(listOf(ServerPlace.STANDARD, ServerPlace.SIDE), removableServers(all).map { it.place })
-        assertEquals(DeployInstance.SIDE, removableServers(all)[1].deployInstance())
-        assertEquals(46100, removableServers(all)[1].peerPortOrDefault())
+    fun `removal offers only what this app installs, and the standard place only with no foreign server`() {
+        val panel = server("panel", "2.5.0", 56100, 56102, name = "swg-csqtt-csqtt2.service")
+        val other = server("other", "?", 47000, 47002, name = "csqtt47.service")
+        val mine = inv(std21, side252, storeOnly)
+        assertEquals(listOf(ServerPlace.STANDARD, ServerPlace.SIDE), removableServers(mine).map { it.place })
+        assertEquals(DeployInstance.SIDE, removableServers(mine)[1].deployInstance())
+        assertEquals(46100, removableServers(mine)[1].peerPortOrDefault())
+        assertTrue(removalNotes(mine).isEmpty())
+        // the stock cleanup of a standard-place removal would stop the foreign server: withheld, and said why
+        for (foreign in listOf(panel, other)) {
+            val box = inv(std21, side252, foreign)
+            assertEquals(listOf(ServerPlace.SIDE), removableServers(box).map { it.place })
+            assertTrue(removalNotes(box).single().contains("не удалить"))
+        }
+        // what else the standard removal deletes is named
+        val withLeftover = inv(std250, server("leftover", "?", 47000, 47002, state = "stopped", runtime = "docker", name = "mycsqtt"))
+        assertTrue(removalNotes(withLeftover).single().contains("mycsqtt"))
+    }
+
+    @Test
+    fun `an update or a replace says the tunnel password and web login come from this profile`() {
+        assertTrue(plan(inv(std250)).actions[0].detail.contains("«Авторизации» этого профиля"))
+        assertTrue(plan(inv(std21)).actions[1].detail.contains("«Авторизации» этого профиля"))
     }
 }
