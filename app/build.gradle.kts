@@ -72,8 +72,8 @@ android {
         applicationId = "net.sanityprotocol.csqtt"   // our own ID (operator, 2026-10-20): installs beside amurcanov's app, whose key we do not have
         minSdk = 26
         targetSdk = 37
-        versionCode = 231
-        versionName = "2.5.1"
+        versionCode = 235
+        versionName = "2.5.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
