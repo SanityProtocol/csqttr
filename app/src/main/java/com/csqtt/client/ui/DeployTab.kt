@@ -401,6 +401,14 @@ internal fun DeployTab(
                         TunnelManager.addDeployInfoLog("Пароль подключения синхронизирован с паролем сервера")
                     }
                     settingsStore.saveDeployedServer(deployProfile, host, effectivePeerPort, effectiveWebPort)
+                    // the port fields are the profile's connection port: they follow the server just deployed. Once a
+                    // field was edited they stopped following the store and kept the old ports, and a later edit of any
+                    // port field saved the old peer port back, moving the connection off the new server
+                    withContext(Dispatchers.Main) {
+                        peerPort = effectivePeerPort.toString()
+                        webPort = effectiveWebPort.toString()
+                        portsEdited = false
+                    }
                     if (effectivePeerPort != CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT) {
                         TunnelManager.addDeployInfoLog("Подключение настроено на порт сервера $effectivePeerPort")
                     }
