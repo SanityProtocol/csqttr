@@ -204,7 +204,9 @@ class MainActivity : ComponentActivity() {
                     showVkAuthDialog = false
                     authScope.launch {
                         appSettingsStore.saveVkAccessToken(payload.token, payload.userId)
-                        authContext.showRaisedToast("Вечный VK access token сохранен", Toast.LENGTH_SHORT)
+                        // VK can hand over an expiring token now and then (accepted after one retry): say which it is
+                        val kind = if (payload.expiresIn > 0) "VK access token сохранён (временный)" else "Вечный VK access token сохранён"
+                        authContext.showRaisedToast(kind, Toast.LENGTH_SHORT)
                     }
                 }
                 if (v2Design) {
