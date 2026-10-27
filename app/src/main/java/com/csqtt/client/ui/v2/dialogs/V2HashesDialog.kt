@@ -95,10 +95,18 @@ fun V2HashesDialog(
     var results by remember(validationResults) { mutableStateOf(validationResults) }
     var removedOwner by remember(removedOwnerHashes) { mutableStateOf(removedOwnerHashes) }
     val fieldFocus = remember { List(6) { FocusRequester() } }
+
     var isChecking by remember { mutableStateOf(false) }
     var unavailableCount by remember { mutableIntStateOf(0) }
 
     val hashes = listOf(h1, h2, h3, h4, h5, h6)
+
+    // the tunnel takes at most MAX_VK_HASHES, the owner's first: say when the participant's own would be cut
+    val ownerInUse = ownerHashes.count { it !in removedOwner }
+    val ownFilled = hashes.count { it.trim().length >= 16 }
+    val overLimit = ownerHashes.isNotEmpty() &&
+        ownerInUse + ownFilled > com.csqtt.client.CsqttConstants.Tunnel.MAX_VK_HASHES
+    var replaceNote by remember { mutableStateOf(false) }
 
     fun updateHash(index: Int, raw: String) {
         val cleaned = stripVkUrlStatic(raw.filter { it != ' ' && it != '\n' && it != '\r' })
@@ -269,8 +277,9 @@ fun V2HashesDialog(
                                     text = "Заменить",
                                     onClick = {
                                         setRemoved(true)
-                                        hashes.indexOfFirst { it.isBlank() }.takeIf { it >= 0 }
-                                            ?.let { free -> runCatching { fieldFocus[free].requestFocus() } }
+                                        val free = hashes.indexOfFirst { it.isBlank() }
+                                        replaceNote = free < 0
+                                        if (free >= 0) runCatching { fieldFocus[free].requestFocus() }
                                     },
                                     style = V2PillStyle.Outline,
                                     enabled = !isChecking,
@@ -299,6 +308,21 @@ fun V2HashesDialog(
                         color = colors.textSecondary,
                         modifier = Modifier.padding(top = 4.dp),
                     )
+                    if (replaceNote) {
+                        Text(
+                            text = "Свободных полей нет: очистите один из своих хешей и вставьте новый",
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = V2BodyFamily, fontSize = 12.sp),
+                            color = colors.error,
+                        )
+                    }
+                    if (overLimit) {
+                        Text(
+                            text = "Используются первые ${com.csqtt.client.CsqttConstants.Tunnel.MAX_VK_HASHES} хешей: сначала " +
+                                "владельца, потом ваши. Чтобы работали все ваши, уберите часть хешей владельца.",
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = V2BodyFamily, fontSize = 12.sp),
+                            color = colors.textSecondary,
+                        )
+                    }
                 }
 
                 hashes.forEachIndexed { idx, value ->

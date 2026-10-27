@@ -407,7 +407,6 @@ fun V2SettingsScreen(
                         title = "VK хеши",
                         action = "От владельца: ${linkHashes.count { it !in linkHashesRemoved }} · свои: $filledHashCount",
                         onAction = { showHashesDialog = true },
-                        enabled = !tunnelRunning,
                     )
                 } else if (linkTokenActive) {
                     V2SettingRow(title = "VK токен активен")

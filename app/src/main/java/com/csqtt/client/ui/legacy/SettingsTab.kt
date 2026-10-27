@@ -434,7 +434,8 @@ internal fun SettingsTabContent(
     val isPeerValid = peerInput.isNotBlank() && !peerInput.contains(":")
     val isPeerPortValid = peerPortInput.toIntOrNull() in 1..65535
     val hashesReadyForTunnel = when {
-        participantMode && linkHashes.isNotEmpty() -> true
+        // the owner's hashes still in use, or the participant's own
+        participantMode && linkHashes.isNotEmpty() -> linkHashes.any { it !in linkHashesRemoved } || filledHashCount > 0
         participantMode && linkTokenActive -> true
         autoHashMode -> effectiveVkTokenActive
         else -> filledHashCount > 0
@@ -586,7 +587,6 @@ internal fun SettingsTabContent(
                         )
                         OutlinedButton(
                             onClick = { showHashesDialog = true },
-                            enabled = !tunnelRunning,
                             modifier = Modifier.fillMaxWidth().height(48.dp),
                             shape = CsqttShapes.Pill,
                         ) {

@@ -107,7 +107,9 @@ internal fun ConnectionTab(
     var pendingStartAfterVpnPermission by remember { mutableStateOf(false) }
 
     val parsedLink = remember(csqttLink) { parseCsqttLink(csqttLink) }
-    val linkHashes = parsedLink?.hashes.orEmpty()
+    val linkHashesRemoved by settingsStore.linkHashesRemoved.collectAsStateWithLifecycle(initialValue = emptySet())
+    // the owner's hashes still in use: the ones the participant took out do not count
+    val linkHashes = parsedLink?.hashes.orEmpty().filterNot { it in linkHashesRemoved }
     val linkTokenActive = csqttLinkMode && parsedLink?.vkAccessToken?.isNotEmpty() == true
     val rawManualHashes = remember(vkHashes) {
         vkHashes.split(Regex("[,\\s\\n]+"))
