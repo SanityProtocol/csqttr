@@ -83,7 +83,9 @@ fun FloatingToolbar(
     var showImportExportDialog by rememberSaveable { mutableStateOf(false) }
     var showAutoPauseInfo by rememberSaveable { mutableStateOf(false) }
     var showBatterySaverInfo by rememberSaveable { mutableStateOf(false) }
-    val batterySaverEnabled by settingsStore.batterySaverEnabled.collectAsStateWithLifecycle(initialValue = false)
+    val batterySaverMode by settingsStore.batterySaverMode.collectAsStateWithLifecycle(
+        initialValue = BatterySaver.DEFAULT_MODE,
+    )
     val batterySaverPercent by settingsStore.batterySaverPercent.collectAsStateWithLifecycle(
         initialValue = BatterySaver.DEFAULT_PERCENT,
     )
@@ -344,21 +346,23 @@ fun FloatingToolbar(
                         infoContentDescription = "Как работает автопауза при Wi-Fi",
                     )
 
-                    CsqttSettingRow(
+                    CompactDropdownSetting(
                         title = BatterySaver.TITLE,
-                        checked = batterySaverEnabled,
-                        onCheckedChange = { checked -> scope.launch { settingsStore.saveBatterySaver(checked) } },
-                        onInfoClick = { showBatterySaverInfo = true },
-                        infoContentDescription = "Как работает экономия батареи",
+                        selectedKey = batterySaverMode,
+                        options = BatterySaver.MODES,
+                        enabled = true,
+                        onSelected = { mode -> scope.launch { settingsStore.saveBatterySaverMode(mode) } },
+                        onTitleInfo = { showBatterySaverInfo = true },
                     )
 
-                    if (batterySaverEnabled) {
+                    // the level counts only in «Свой уровень»; «Авто» follows the phone's battery saver, so it is shown greyed
+                    if (batterySaverMode != BatterySaver.MODE_OFF) {
                         CompactDropdownSetting(
-                            title = "Включать при заряде",
+                            title = BatterySaver.LEVEL_TITLE,
                             selectedKey = batterySaverPercent.toString(),
                             options = (BatterySaver.PERCENT_CHOICES + batterySaverPercent).distinct().sorted()
                                 .map { percent -> percent.toString() to "≤ $percent %" },
-                            enabled = true,
+                            enabled = batterySaverMode == BatterySaver.MODE_LEVEL,
                             onSelected = { key ->
                                 key.toIntOrNull()?.let { percent -> scope.launch { settingsStore.saveBatterySaverPercent(percent) } }
                             },

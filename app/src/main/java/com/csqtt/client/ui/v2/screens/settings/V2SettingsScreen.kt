@@ -172,7 +172,9 @@ fun V2SettingsScreen(
     var showTurnTransportDetailDialog by rememberSaveable { mutableStateOf<String?>(null) }
     var showAutoPauseInfoDialog by rememberSaveable { mutableStateOf(false) }
     var showBatterySaverInfoDialog by rememberSaveable { mutableStateOf(false) }
-    val batterySaverEnabled by settingsStore.batterySaverEnabled.collectAsStateWithLifecycle(initialValue = false)
+    val batterySaverMode by settingsStore.batterySaverMode.collectAsStateWithLifecycle(
+        initialValue = com.csqtt.client.BatterySaver.DEFAULT_MODE,
+    )
     val batterySaverPercent by settingsStore.batterySaverPercent.collectAsStateWithLifecycle(
         initialValue = com.csqtt.client.BatterySaver.DEFAULT_PERCENT,
     )
@@ -782,20 +784,26 @@ fun V2SettingsScreen(
                 onInfoClick = { showAutoPauseInfoDialog = true },
             )
 
-            V2SwitchSetting(
+            val saverModes = com.csqtt.client.BatterySaver.MODES
+            V2DropdownSetting(
                 title = com.csqtt.client.BatterySaver.TITLE,
-                checked = batterySaverEnabled,
-                onCheckedChange = { checked ->
-                    scope.launch { settingsStore.saveBatterySaver(checked) }
+                value = saverModes.firstOrNull { it.first == batterySaverMode }?.second ?: saverModes.first().second,
+                options = saverModes.map { it.second },
+                onSelected = { label ->
+                    saverModes.firstOrNull { it.second == label }?.let { (mode, _) ->
+                        scope.launch { settingsStore.saveBatterySaverMode(mode) }
+                    }
                 },
-                onInfoClick = { showBatterySaverInfoDialog = true },
+                onTitleInfo = { showBatterySaverInfoDialog = true },
             )
 
-            if (batterySaverEnabled) {
+            // the level counts only in «Свой уровень»; «Авто» follows the phone's battery saver, so it is shown greyed
+            if (batterySaverMode != com.csqtt.client.BatterySaver.MODE_OFF) {
                 val choices = (com.csqtt.client.BatterySaver.PERCENT_CHOICES + batterySaverPercent).distinct().sorted()
                 V2DropdownSetting(
-                    title = "Включать при заряде",
+                    title = com.csqtt.client.BatterySaver.LEVEL_TITLE,
                     value = "≤ $batterySaverPercent %",
+                    enabled = batterySaverMode == com.csqtt.client.BatterySaver.MODE_LEVEL,
                     options = choices.map { "≤ $it %" },
                     onSelected = { label ->
                         choices.firstOrNull { "≤ $it %" == label }?.let { percent ->
