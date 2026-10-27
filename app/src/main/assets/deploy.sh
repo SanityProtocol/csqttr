@@ -997,10 +997,14 @@ prepare_uploaded_release() {
             install -m 0600 "$CSQTT_ENV_FILE" "$UPLOAD_ENV_FILE" || die "Не удалось прочитать существующую WEB-конфигурацию" "$EXIT_PREFLIGHT_FAILED"
         fi
         if [ ! -s "$UPLOAD_OVERRIDES_FILE" ]; then
-            if [ ! -s "$CSQTT_DEPLOY_OVERRIDES_FILE" ]; then
-                die "Не найдена существующая deploy-конфигурация ${CSQTT_DEPLOY_OVERRIDES_FILE}; выполните первый деплой" "$EXIT_PREFLIGHT_FAILED"
+            if [ -s "$CSQTT_DEPLOY_OVERRIDES_FILE" ]; then
+                install -m 0600 "$CSQTT_DEPLOY_OVERRIDES_FILE" "$UPLOAD_OVERRIDES_FILE" || die "Не удалось прочитать существующую deploy-конфигурацию" "$EXIT_PREFLIGHT_FAILED"
+            else
+                # The server deletes its deploy overrides once it has applied them (main.rs), so a server that has started
+                # has none; its tunnel password and DNS are in its database by then. An empty main_password keeps them.
+                ( umask 077; printf '{"main_password":""}\n' > "$UPLOAD_OVERRIDES_FILE" ) || \
+                    die "Не удалось подготовить deploy-конфигурацию обновления" "$EXIT_PREFLIGHT_FAILED"
             fi
-            install -m 0600 "$CSQTT_DEPLOY_OVERRIDES_FILE" "$UPLOAD_OVERRIDES_FILE" || die "Не удалось прочитать существующую deploy-конфигурацию" "$EXIT_PREFLIGHT_FAILED"
         fi
         log_info "Режим обновления: логин, пароли и путь панели сохраняются"
     fi

@@ -155,7 +155,7 @@ fun V2DeploySecretsDialog(
             }
 
             Text(
-                text = "Придумайте логин и пароль для web панели и пароль туннеля — латиница и цифры.",
+                text = "Придумайте логин и пароль для web панели (латиница и цифры) и пароль туннеля.",
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = V2BodyFamily,
                     fontSize = 13.sp,
