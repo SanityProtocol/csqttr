@@ -96,6 +96,8 @@ import com.csqtt.client.ui.legacy.hostHasPort
 import com.csqtt.client.ui.legacy.performDeploy
 import com.csqtt.client.ui.legacy.performUninstall
 import com.csqtt.client.ui.legacy.splitPastedHostPort
+import com.csqtt.client.ui.legacy.utils.TUNNEL_PASSWORD_RULE
+import com.csqtt.client.ui.legacy.utils.isValidTunnelPassword
 import com.csqtt.client.ui.v2.components.V2Card
 import com.csqtt.client.ui.v2.components.V2CircleIconButton
 import com.csqtt.client.ui.v2.components.V2PillButton
@@ -159,9 +161,6 @@ private fun resolveServerPorts(
             ?: CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT,
     )
 }
-
-private fun isDeployMainPasswordValid(password: String): Boolean =
-    password.length == 16 && password.matches(Regex("^[a-zA-Z0-9]{16}$"))
 
 private fun hasWebPanelCredentials(login: String, password: String): Boolean =
     login.isNotBlank() && password.isNotBlank()
@@ -365,7 +364,7 @@ fun V2DeployScreen(
         }
     }
 
-    val mainPasswordConfigured = isDeployMainPasswordValid(savedMainPass)
+    val mainPasswordConfigured = isValidTunnelPassword(savedMainPass)
     val webPanelConfigured = hasWebPanelCredentials(savedWebLogin, savedWebPassword)
     val sshKeysFilled = if (savedSshPrivateKey.isNotBlank()) 1 else 0
     val sshAuthReady = sshLogin.isNotBlank() &&
@@ -552,7 +551,7 @@ fun V2DeployScreen(
                 return
             }
             requiresCredentials && !mainPasswordConfigured -> {
-                showDeployToast("Пароль туннеля должен содержать ровно 16 символов [0-9A-Za-z]")
+                showDeployToast("Пароль туннеля: $TUNNEL_PASSWORD_RULE")
                 showSecretsDialog = true
                 return
             }

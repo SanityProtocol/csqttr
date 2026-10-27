@@ -44,7 +44,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.csqtt.client.SettingsStore
+import com.csqtt.client.ui.legacy.utils.TUNNEL_PASSWORD_RULE
 import com.csqtt.client.ui.legacy.utils.generate16CharPassword
+import com.csqtt.client.ui.legacy.utils.isValidTunnelPassword
 import com.csqtt.client.ui.v2.components.V2CircleIconButton
 import com.csqtt.client.ui.v2.components.V2PillButton
 import com.csqtt.client.ui.v2.components.V2PillStyle
@@ -77,11 +79,11 @@ fun V2DeploySecretsDialog(
     var passwordsVisible by rememberSaveable { mutableStateOf(false) }
 
     val allowedChars = Regex("^[a-zA-Z0-9]+$")
-    val is16AlphaNum = Regex("^[a-zA-Z0-9]{16}$")
 
     val isWebLoginValid = webLoginInput.isNotEmpty() && webLoginInput.matches(allowedChars)
     val isWebPassValid = webPassInput.isNotEmpty() && webPassInput.matches(allowedChars)
-    val isMainPassValid = mainPassInput.length == 16 && mainPassInput.matches(is16AlphaNum)
+    // Any password the server takes (2.5.2): not only 16 Latin letters and digits
+    val isMainPassValid = isValidTunnelPassword(mainPassInput)
     val canSave = isWebLoginValid && isWebPassValid && isMainPassValid
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -181,9 +183,9 @@ fun V2DeploySecretsDialog(
                 V2TextField(
                     value = mainPassInput,
                     onValueChange = {
-                        mainPassInput = it.filter { c -> !c.isWhitespace() }.take(16)
+                        mainPassInput = it.filter { c -> !c.isWhitespace() }
                     },
-                    placeholder = "Пароль туннеля (16 символов)",
+                    placeholder = "Пароль туннеля",
                     isError = mainPassInput.isNotEmpty() && !isMainPassValid,
                     modifier = Modifier.weight(1f),
                     visualTransformation = if (passwordsVisible) VisualTransformation.None else PasswordVisualTransformation(),
@@ -200,7 +202,7 @@ fun V2DeploySecretsDialog(
 
             if (mainPassInput.isNotEmpty() && !isMainPassValid) {
                 Text(
-                    text = "Требуется ровно 16 символов [0-9A-Za-z]",
+                    text = TUNNEL_PASSWORD_RULE,
                     style = MaterialTheme.typography.bodySmall.copy(fontFamily = V2BodyFamily),
                     color = colors.error,
                 )
