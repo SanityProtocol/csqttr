@@ -112,6 +112,10 @@ class TunnelService : Service() {
     // «Экономия батареи»: the setting, and the charge as the sticky battery broadcast last said (main thread)
     @Volatile
     private var batterySaverMode = BatterySaver.DEFAULT_MODE
+    // nothing is decided before the stored mode is read: the sticky battery broadcast arrives at once, and the default
+    // («Авто») could let go of the locks for a moment under a user's «Выкл»
+    @Volatile
+    private var batterySaverLoaded = false
     @Volatile
     private var batterySaverPercent = BatterySaver.DEFAULT_PERCENT
     private var batteryLevel = -1
@@ -1077,6 +1081,7 @@ class TunnelService : Service() {
                 .collect { (mode, percent) ->
                     batterySaverMode = mode
                     batterySaverPercent = percent
+                    batterySaverLoaded = true
                     withContext(Dispatchers.Main) { reconcileBatterySaver() }
                 }
         }
@@ -1092,6 +1097,7 @@ class TunnelService : Service() {
     }
 
     private fun reconcileBatterySaver() {
+        if (!batterySaverLoaded) return
         val save = BatterySaver.shouldSave(
             batterySaverMode, batterySaverPercent, batteryLevel, batteryCharging, systemPowerSave,
         )
