@@ -83,6 +83,7 @@ import com.csqtt.client.DeployManager
 import com.csqtt.client.DeployServerInfo
 import com.csqtt.client.DeploySettingsSnapshot
 import com.csqtt.client.SettingsStore
+import com.csqtt.client.SshHostKeyStore
 import com.csqtt.client.TunnelManager
 import com.csqtt.client.TunnelService
 import com.csqtt.client.showRaisedToast
@@ -91,8 +92,10 @@ import com.csqtt.client.ui.legacy.DeployActionMode
 import com.csqtt.client.ui.legacy.bundledServerVersion
 import com.csqtt.client.ui.legacy.comparableServerVersion
 import com.csqtt.client.ui.legacy.friendlyDeployError
+import com.csqtt.client.ui.legacy.hostHasPort
 import com.csqtt.client.ui.legacy.performDeploy
 import com.csqtt.client.ui.legacy.performUninstall
+import com.csqtt.client.ui.legacy.splitPastedHostPort
 import com.csqtt.client.ui.v2.components.V2Card
 import com.csqtt.client.ui.v2.components.V2CircleIconButton
 import com.csqtt.client.ui.v2.components.V2PillButton
@@ -109,10 +112,13 @@ import com.csqtt.client.ui.v2.design.V2Theme
 import com.csqtt.client.ui.v2.design.V2VersionFamily
 import com.csqtt.client.ui.v2.dialogs.V2DeploySecretsDialog
 import com.csqtt.client.ui.v2.dialogs.V2DockerInstallInfoDialog
+import com.csqtt.client.ui.v2.dialogs.V2HostKeyChangedDialog
 import com.csqtt.client.ui.v2.dialogs.V2SshKeysDialog
 import com.csqtt.client.ui.v2.dialogs.V2UninstallConfirmDialog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -126,22 +132,27 @@ private data class EffectiveServerPorts(
     val web: Int,
 )
 
+/**
+ * The SSH port is the server form's own field and always counts; «Ручные порты» covers only the server's Peer and Web
+ * ports. (It used to cover SSH too, so with the switch off a VPS whose SSH is not on 22 was dialled on 22 whatever the
+ * field said, and refused.)
+ */
 private fun resolveServerPorts(
     manualPorts: Boolean,
     sshPort: String,
     peerPort: String,
     webPort: String,
 ): EffectiveServerPorts {
+    val ssh = sshPort.toIntOrNull()?.takeIf { it in 1..65535 } ?: CsqttConstants.Network.DEFAULT_SSH_PORT
     if (!manualPorts) {
         return EffectiveServerPorts(
-            ssh = CsqttConstants.Network.DEFAULT_SSH_PORT,
+            ssh = ssh,
             peer = CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT,
             web = CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT,
         )
     }
     return EffectiveServerPorts(
-        ssh = sshPort.toIntOrNull()?.takeIf { it in 1..65535 }
-            ?: CsqttConstants.Network.DEFAULT_SSH_PORT,
+        ssh = ssh,
         peer = peerPort.toIntOrNull()?.takeIf { it in 1..65535 }
             ?: CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT,
         web = webPort.toIntOrNull()?.takeIf { it in 1..65535 }
@@ -268,6 +279,8 @@ fun V2DeployScreen(
     var showSshKeysDialog by rememberSaveable(savedSettings.profile) { mutableStateOf(false) }
     var showDockerInfoDialog by rememberSaveable(savedSettings.profile) { mutableStateOf(false) }
     var showRegenConfirmDialog by rememberSaveable(savedSettings.profile) { mutableStateOf(false) }
+    // A server that presented another SSH key than the remembered one, and the action to run again once it is trusted.
+    var keyChange by remember(savedSettings.profile) { mutableStateOf<Pair<SshHostKeyStore.KeyChange, () -> Unit>?>(null) }
 
     // Track the last values copied from the store. The draft itself is restored after a page
     // switch, so syncing only on an actual change keeps unsaved edits instead of resetting them.
@@ -357,7 +370,8 @@ fun V2DeployScreen(
     val sshKeysFilled = if (savedSshPrivateKey.isNotBlank()) 1 else 0
     val sshAuthReady = sshLogin.isNotBlank() &&
         if (sshKeysMode) sshKeysFilled == 1 else sshPassword.isNotBlank()
-    val portsValid = !manualPorts || listOf(sshPort, peerPort, webPort).all(::isValidPort)
+    val portsValid = (sshPort.isBlank() || isValidPort(sshPort)) &&
+        (!manualPorts || listOf(peerPort, webPort).all(::isValidPort))
     val actionsBusy = isDeploying || isInspecting || isChangingSecretPath
 
     val panelDisplayUrl = buildString {
@@ -382,6 +396,21 @@ fun V2DeployScreen(
         Handler(Looper.getMainLooper()).post {
             context.showRaisedToast(message, Toast.LENGTH_LONG)
         }
+    }
+
+    /** After a failed SSH action: if the server's key changed, ask whether to trust it (true), the failure stands otherwise. */
+    suspend fun offerNewHostKey(target: String, port: Int, retry: () -> Unit): Boolean {
+        val change = SshHostKeyStore.takeKeyChange(target, port) ?: return false
+        withContext(Dispatchers.Main) { keyChange = change to retry }
+        return true
+    }
+
+    /** The address field takes no port: the SSH port has its own field, the panel and Peer ports are the server's. */
+    fun hostHasPortRefused(): Boolean {
+        if (!hostHasPort(host)) return false
+        showDeployToast("Порт SSH укажите в поле «SSH порт», а адрес — без порта")
+        showConfigSheet = true
+        return true
     }
 
     fun resetServerDraft() {
@@ -437,6 +466,7 @@ fun V2DeployScreen(
 
     fun inspectServer() {
         if (isInspecting || isDeploying || isChangingSecretPath) return
+        if (hostHasPortRefused()) return
         val ports = resolveServerPorts(manualPorts, sshPort, peerPort, webPort)
         val deployPrivateKey = if (sshKeysMode) savedSshPrivateKey else ""
         val deployKeyPassphrase = if (sshKeysMode) savedSshKeyPassphrase else ""
@@ -474,7 +504,7 @@ fun V2DeployScreen(
                         "VPS: ${result.message}" +
                             if (result.panelAvailable) ", панель доступна" else ", панель недоступна",
                     )
-                } else {
+                } else if (!offerNewHostKey(host, ports.ssh) { inspectServer() }) {
                     showDeployToast("Ошибка проверки VPS: ${result.message}")
                 }
             } finally {
@@ -515,6 +545,7 @@ fun V2DeployScreen(
                 showConfigSheet = true
                 return
             }
+            hostHasPortRefused() -> return
             !portsValid -> {
                 showDeployToast("Проверьте правильность портов")
                 showConfigSheet = true
@@ -582,7 +613,9 @@ fun V2DeployScreen(
                     )
                     if (!inspection.isSuccess) {
                         DeployManager.stopDeploy(inspection.message)
-                        showDeployToast("Не удалось проверить версию: ${inspection.message}")
+                        if (!offerNewHostKey(host, ports.ssh) { launchDeploy(mode) }) {
+                            showDeployToast("Не удалось проверить версию: ${inspection.message}")
+                        }
                         return@launch
                     }
                     deployDockerMode = when (inspection.serviceStatus) {
@@ -660,7 +693,7 @@ fun V2DeployScreen(
                         TunnelManager.addDeployInfoLog("Пароль подключения синхронизирован с паролем сервера")
                     }
                     showDeployToast("$actionLabel успешно завершена")
-                } else {
+                } else if (!offerNewHostKey(host, ports.ssh) { launchDeploy(mode) }) {
                     showDeployToast(DeployManager.lastResult.value.ifBlank { "Ошибка: $actionLabel" })
                 }
             } catch (e: CancellationException) {
@@ -698,6 +731,7 @@ fun V2DeployScreen(
                 showConfigSheet = true
                 return
             }
+            hostHasPortRefused() -> return
             mode == DeployActionMode.Update && !portsValid -> {
                 showDeployToast("Проверьте правильность портов")
                 showConfigSheet = true
@@ -723,6 +757,7 @@ fun V2DeployScreen(
             showConfigSheet = true
             return
         }
+        if (hostHasPortRefused()) return
         val ports = resolveServerPorts(manualPorts, sshPort, peerPort, webPort)
         val uninstallPrivateKey = if (sshKeysMode) savedSshPrivateKey else ""
         val uninstallKeyPassphrase = if (sshKeysMode) savedSshKeyPassphrase else ""
@@ -752,7 +787,7 @@ fun V2DeployScreen(
                     settingsStore.clearDeployInspection()
                     ServerMaintenanceState.inspectionResult.value = null
                     showDeployToast("CSQTT успешно удален с сервера")
-                } else {
+                } else if (!offerNewHostKey(host, ports.ssh) { startUninstall() }) {
                     showDeployToast(DeployManager.lastResult.value.ifBlank { "Ошибка удаления" })
                 }
             } catch (e: CancellationException) {
@@ -814,6 +849,7 @@ fun V2DeployScreen(
             showConfigSheet = true
             return
         }
+        if (hostHasPortRefused()) return
         val ports = resolveServerPorts(manualPorts, sshPort, peerPort, webPort)
         val candidatePath = UUID.randomUUID().toString()
         val privateKey = if (sshKeysMode) savedSshPrivateKey else ""
@@ -858,7 +894,7 @@ fun V2DeployScreen(
                         settingsStore.saveServerConfigured(true)
                     }
                     showDeployToast(message)
-                } else {
+                } else if (!offerNewHostKey(host, ports.ssh) { changeSecretPath() }) {
                     showDeployToast("Не удалось изменить путь: $message")
                 }
             } finally {
@@ -1213,7 +1249,11 @@ fun V2DeployScreen(
             serverName = serverName,
             onServerNameChange = { serverName = it },
             host = host,
-            onHostChange = { host = it },
+            onHostChange = { value ->
+                val split = splitPastedHostPort(host, value)
+                host = split?.first ?: value
+                if (split != null) sshPort = split.second
+            },
             sshLogin = sshLogin,
             onSshLoginChange = { sshLogin = it },
             sshPassword = sshPassword,
@@ -1327,6 +1367,19 @@ fun V2DeployScreen(
     }
 
     // Диалог подтверждения удаления CSQTT с удалённого сервера
+    keyChange?.let { (change, retry) ->
+        V2HostKeyChangedDialog(
+            change = change,
+            onDismiss = { keyChange = null },
+            onTrust = {
+                keyChange = null
+                SshHostKeyStore.trust(context, change)
+                TunnelManager.addDeployInfoLog("Новый SSH-ключ ${change.host}:${change.port} принят: ${change.presented}")
+                retry()
+            },
+        )
+    }
+
     if (showUninstallDialog) {
         V2UninstallConfirmDialog(
             onDismiss = { showUninstallDialog = false },

@@ -1531,8 +1531,8 @@ private val DEPLOY_LAST_INSPECTION_PANEL = booleanPreferencesKey("deploy_last_in
         dataStore.edit { prefs ->
             val profile = prefs[ACTIVE_PROFILE] ?: 0
             prefs[getProfileKey(MANUAL_PORTS_ENABLED, profile)] = enabled
+            // The SSH port is the server's own setting, not one of the manual ports: it stays as saved.
             if (!enabled) {
-                prefs[getProfileKey(DEPLOY_SSH_PORT, profile)] = CsqttConstants.Network.DEFAULT_SSH_PORT.toString()
                 prefs[getProfileKey(SERVER_PEER_PORT, profile)] = CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT
                 prefs[getProfileKey(SERVER_WEB_PORT, profile)] = CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT
             }

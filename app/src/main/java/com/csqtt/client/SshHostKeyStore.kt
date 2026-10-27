@@ -22,6 +22,33 @@ object SshHostKeyStore {
         return "SHA256:$encoded"
     }
 
+    /** A server that presented a key other than the one remembered for it: the old and the new fingerprint. */
+    data class KeyChange(val host: String, val port: Int, val pinned: String, val presented: String)
+
+    @Volatile
+    private var lastChange: KeyChange? = null
+
+    /** The key change the last refused connection to [host]:[port] met, once; null when that was not the reason. */
+    fun takeKeyChange(host: String, port: Int): KeyChange? {
+        val change = lastChange ?: return null
+        if (entryKey(change.host, change.port) != entryKey(host, port)) return null
+        lastChange = null
+        return change
+    }
+
+    /**
+     * The user accepted the new key: remember exactly the one they were shown. Clearing the entry instead would pin
+     * whatever key the next connection meets, which need not be the one on the screen.
+     */
+    fun trust(context: Context, change: KeyChange) {
+        context.applicationContext
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(entryKey(change.host, change.port), change.presented)
+            .apply()
+        DeployManager.writeError("SSH host key for ${entryKey(change.host, change.port)} trusted by the user: ${change.presented}")
+    }
+
     fun clear(context: Context, host: String, port: Int) {
         context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -46,6 +73,7 @@ object SshHostKeyStore {
             if (pinned == presented) {
                 return true
             }
+            lastChange = KeyChange(hostname, port, pinned, presented)
             DeployManager.writeError(
                 "SSH host key mismatch for $entry: expected $pinned, presented $presented"
             )

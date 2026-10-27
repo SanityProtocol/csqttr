@@ -52,6 +52,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.csqtt.client.CsqttConstants
+import com.csqtt.client.ui.legacy.hostHasPort
 import com.csqtt.client.ui.legacy.sanitizeSshPassword
 import com.csqtt.client.ui.v2.components.V2CircleIconButton
 import com.csqtt.client.ui.v2.components.V2PillButton
@@ -95,7 +96,7 @@ fun V2ServerConfigSheet(
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
-    val canSave = !isDeploying && host.isNotBlank() &&
+    val canSave = !isDeploying && host.isNotBlank() && !hostHasPort(host) &&
         (sshPort.isBlank() || isValidPort(sshPort))
 
     fun animateDismiss(onDone: () -> Unit = onDismiss) {
@@ -194,7 +195,7 @@ fun V2ServerConfigSheet(
                     onValueChange = { onHostChange(it.filterNot(Char::isWhitespace)) },
                     placeholder = "IP-адрес или домен",
                     enabled = !isDeploying,
-                    isError = host.isBlank(),
+                    isError = host.isBlank() || hostHasPort(host),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     modifier = Modifier.weight(1f),
                 )

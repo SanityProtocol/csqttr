@@ -75,6 +75,8 @@ internal fun deployFailureMessage(exitStatus: Int, output: String): String {
     }
 }
 
+private val REFUSED_PORT = Regex("""\(port (\d{1,5})\)""")
+
 internal fun friendlyDeployError(message: String?): String {
     val text = message.orEmpty()
     return when {
@@ -99,8 +101,13 @@ internal fun friendlyDeployError(message: String?): String {
         text.contains("session is down", ignoreCase = true) ||
             text.contains("connection is closed", ignoreCase = true) ->
             "SSH-соединение было разорвано"
-        text.contains("Connection refused", ignoreCase = true) ->
-            "SSH: соединение отклонено — проверьте порт и доступность VPS"
+        text.contains("Connection refused", ignoreCase = true) -> {
+            // Android's ConnectException names the port it dialled first: "failed to connect to /1.2.3.4 (port 22) from …"
+            val port = REFUSED_PORT.find(text)?.groupValues?.get(1)
+            val which = port?.let { "Порт SSH $it" } ?: "Порт SSH"
+            "$which не принимает соединения. Проверьте порт SSH в данных сервера (SSH может работать не на 22) и что VPS включён. " +
+                "После нескольких неверных паролей VPS может временно блокировать ваш IP (fail2ban)"
+        }
         text.isBlank() -> "Неизвестная ошибка установки"
         else -> text.take(240)
     }

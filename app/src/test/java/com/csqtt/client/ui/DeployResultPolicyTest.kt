@@ -65,6 +65,17 @@ class DeployResultPolicyTest {
     }
 
     @Test
+    fun refusedNamesThePortAndWhatToCheck() {
+        val message = friendlyDeployError(
+            "failed to connect to /1.2.3.4 (port 2222) from /10.0.0.2 (port 40512) after 30000ms: " +
+                "isConnected failed: ECONNREFUSED (Connection refused)"
+        )
+        assertTrue(message.startsWith("Порт SSH 2222 не принимает соединения"))
+        assertTrue(message.contains("Проверьте порт SSH"))
+        assertTrue(friendlyDeployError("Connection refused").startsWith("Порт SSH не принимает соединения"))
+    }
+
+    @Test
     fun timeoutHasShortMessage() {
         assertEquals("Истекло время ожидания SSH/SFTP", friendlyDeployError("connect timeout"))
     }

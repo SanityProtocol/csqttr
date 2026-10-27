@@ -45,7 +45,9 @@ import com.csqtt.client.TunnelManager
 import com.csqtt.client.BuildConfig
 import com.csqtt.client.CsqttConstants
 import com.csqtt.client.R
+import com.csqtt.client.SshHostKeyStore
 import com.csqtt.client.ui.legacy.dialogs.DeploySecretsDialog
+import com.csqtt.client.ui.legacy.dialogs.HostKeyChangedDialog
 import com.csqtt.client.ui.legacy.dialogs.SshKeysDialog
 import com.csqtt.client.ui.legacy.dialogs.UninstallConfirmDialog
 import com.csqtt.client.ui.legacy.components.CsqttBanner
@@ -94,7 +96,7 @@ internal data class DeployUiState(
     val showValidation: Boolean = false,
 ) {
     val portsValid: Boolean
-        get() = !manualPorts || listOf(sshPort, peerPort, webPort).all(::isValidPort)
+        get() = isValidPort(sshPort) && (!manualPorts || listOf(peerPort, webPort).all(::isValidPort))
 
     val authorizationConfigured: Boolean
         get() = webPanelConfigured && mainPasswordConfigured
@@ -103,10 +105,10 @@ internal data class DeployUiState(
         get() = sshLogin.isNotBlank() && if (sshKeysMode) sshKeysFilled == 1 else sshPassword.isNotBlank()
 
     val canInstall: Boolean
-        get() = host.isNotBlank() && sshAuthReady && authorizationConfigured && portsValid
+        get() = host.isNotBlank() && !hostHasPort(host) && sshAuthReady && authorizationConfigured && portsValid
 
     val canUninstall: Boolean
-        get() = host.isNotBlank() && sshAuthReady && portsValid
+        get() = host.isNotBlank() && !hostHasPort(host) && sshAuthReady && portsValid
 
     val panelDisplayUrl: String
         get() {
@@ -149,6 +151,23 @@ internal fun isDeployMainPasswordValid(password: String): Boolean = isValidTunne
 
 internal fun isValidPort(value: String): Boolean = value.toIntOrNull() in 1..65535
 
+// "1.2.3.4:2222" or "vps.example:2222" — an address with an SSH port after it (one ':' only: an IPv6 address has several)
+private val HOST_WITH_PORT = Regex("""^([^:\[\]]+):(\d{1,5})$""")
+
+/** The address field holds a port too ("1.2.3.4:2222"): the port belongs in «Порт SSH». */
+internal fun hostHasPort(host: String): Boolean = HOST_WITH_PORT.matches(host)
+
+/**
+ * A pasted "host:port" split into the address and the SSH port; null for anything else, and for typing, which adds one
+ * character at a time — splitting there would move the next typed digit into the address.
+ */
+internal fun splitPastedHostPort(previous: String, value: String): Pair<String, String>? {
+    if (value.length - previous.length < 2) return null
+    val match = HOST_WITH_PORT.matchEntire(value) ?: return null
+    val (host, port) = match.destructured
+    return if (isValidPort(port)) host to port else null
+}
+
 @Immutable
 internal data class EffectiveServerPorts(
     val ssh: Int,
@@ -162,15 +181,18 @@ internal fun resolveServerPorts(
     peerPort: String,
     webPort: String,
 ): EffectiveServerPorts {
+    // the SSH port is the form's whatever «Ручные порты» says: that switch is about the csqtt server's ports. Tied to it,
+    // a VPS with SSH on another port was always dialled on 22 ("соединение отклонено") with no visible field to change
+    val ssh = sshPort.toIntOrNull()?.takeIf { it in 1..65535 } ?: CsqttConstants.Network.DEFAULT_SSH_PORT
     if (!manualPorts) {
         return EffectiveServerPorts(
-            ssh = CsqttConstants.Network.DEFAULT_SSH_PORT,
+            ssh = ssh,
             peer = CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT,
             web = CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT,
         )
     }
     return EffectiveServerPorts(
-        ssh = sshPort.toIntOrNull()?.takeIf { it in 1..65535 } ?: CsqttConstants.Network.DEFAULT_SSH_PORT,
+        ssh = ssh,
         peer = peerPort.toIntOrNull()?.takeIf { it in 1..65535 } ?: CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT,
         web = webPort.toIntOrNull()?.takeIf { it in 1..65535 } ?: CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT,
     )
@@ -243,6 +265,10 @@ internal fun DeployTab(
     var removeNotes by remember(savedSettings.profile) { mutableStateOf<List<String>>(emptyList()) }
     var pendingReplace by remember(savedSettings.profile) { mutableStateOf<PlanAction?>(null) }
     var pendingRemove by remember(savedSettings.profile) { mutableStateOf<FoundServer?>(null) }
+    // the server presented another SSH key than the remembered one: the change and the check to run again if trusted
+    var keyChange by remember(savedSettings.profile) {
+        mutableStateOf<Pair<SshHostKeyStore.KeyChange, (ServerInventory) -> Unit>?>(null)
+    }
 
     LaunchedEffect(savedSettings.profile, savedIp) {
         if (!generalEdited) {
@@ -342,7 +368,12 @@ internal fun DeployTab(
                 DeployManager.writeError("Server check error (${e.javaClass.simpleName}): ${e.message}")
                 TunnelManager.addDeployErrorLog(message)
                 DeployManager.stopDeploy(message)
-                scope.launch { snackbarHostState.showSnackbar(message) }
+                val change = SshHostKeyStore.takeKeyChange(host, ssh)
+                if (change != null) {
+                    withContext(Dispatchers.Main) { keyChange = change to onChecked }
+                } else {
+                    scope.launch { snackbarHostState.showSnackbar(message) }
+                }
             }
         }
     }
@@ -496,7 +527,13 @@ internal fun DeployTab(
         onAction = { action ->
             when (action) {
                 is DeployAction.HostChanged -> {
-                    host = action.value.filterNot(Char::isWhitespace)
+                    val value = action.value.filterNot(Char::isWhitespace)
+                    val split = splitPastedHostPort(host, value)
+                    host = split?.first ?: value
+                    if (split != null) {
+                        sshPort = split.second
+                        portsEdited = true
+                    }
                     generalEdited = true
                 }
                 is DeployAction.LoginChanged -> {
@@ -509,7 +546,6 @@ internal fun DeployTab(
                 }
                 is DeployAction.ManualPortsChanged -> {
                     if (!action.enabled) {
-                        sshPort = CsqttConstants.Network.DEFAULT_SSH_PORT.toString()
                         peerPort = CsqttConstants.Network.DEFAULT_SERVER_PEER_PORT.toString()
                         webPort = CsqttConstants.Network.DEFAULT_SERVER_WEB_PORT.toString()
                         portsEdited = false
@@ -563,6 +599,8 @@ internal fun DeployTab(
                             scope.launch { snackbarHostState.showSnackbar("Укажите данные SSH для подключения к серверу") }
                         } else if (state.host.isBlank()) {
                             scope.launch { snackbarHostState.showSnackbar("Укажите IP сервера или домен") }
+                        } else if (hostHasPort(state.host)) {
+                            scope.launch { snackbarHostState.showSnackbar("Порт SSH укажите в поле «Порт SSH», а адрес — без порта") }
                         } else if (!state.portsValid) {
                             scope.launch { snackbarHostState.showSnackbar("Проверьте правильность портов") }
                         }
@@ -690,6 +728,19 @@ internal fun DeployTab(
             onConfirm = {
                 pendingRemove = null
                 startUninstall(server)
+            },
+        )
+    }
+
+    keyChange?.let { (change, onChecked) ->
+        HostKeyChangedDialog(
+            change = change,
+            onDismiss = { keyChange = null },
+            onTrust = {
+                keyChange = null
+                SshHostKeyStore.trust(context, change)
+                TunnelManager.addDeployInfoLog("Новый SSH-ключ сервера ${change.host} сохранён: ${change.presented}")
+                runServerCheck(onChecked)
             },
         )
     }

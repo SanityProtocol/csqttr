@@ -78,15 +78,7 @@ internal fun DeployScreen(
                     if (state.sshKeysMode) {
                         AdaptiveFieldPair(
                             first = {
-                                DeployTextField(
-                                    value = state.host,
-                                    onValueChange = { onAction(DeployAction.HostChanged(it)) },
-                                    label = "IP сервера или домен",
-                                    placeholder = "1.2.3.4",
-                                    enabled = !state.isDeploying,
-                                    isError = state.host.isBlank(),
-                                    keyboardType = KeyboardType.Uri,
-                                )
+                                HostAndSshPortFields(state = state, onAction = onAction)
                             },
                             second = {
                                 DeployTextField(
@@ -126,15 +118,7 @@ internal fun DeployScreen(
                             Text("Ключи SSH ${state.sshKeysFilled}/1", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, maxLines = 1)
                         }
                     } else {
-                        DeployTextField(
-                            value = state.host,
-                            onValueChange = { onAction(DeployAction.HostChanged(it)) },
-                            label = "IP сервера или домен",
-                            placeholder = "1.2.3.4",
-                            enabled = !state.isDeploying,
-                            isError = state.host.isBlank(),
-                            keyboardType = KeyboardType.Uri,
-                        )
+                        HostAndSshPortFields(state = state, onAction = onAction)
                         AnimatedVisibility(
                             visible = state.manualPorts,
                             enter = fadeIn() + expandVertically(expandFrom = Alignment.Top),
@@ -290,6 +274,40 @@ internal fun DeployScreen(
     }
 }
 
+// The address and the SSH port side by side, always: the SSH port is the VPS's, not one of the csqtt server's ports
+// «Ручные порты» chooses (it used to sit there, so a VPS with SSH off port 22 could not be reached with the switch off).
+@Composable
+private fun HostAndSshPortFields(
+    state: DeployUiState,
+    onAction: (DeployAction) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(CsqttSpacing.Sm),
+    ) {
+        DeployTextField(
+            value = state.host,
+            onValueChange = { onAction(DeployAction.HostChanged(it)) },
+            label = "IP сервера или домен",
+            placeholder = "1.2.3.4",
+            enabled = !state.isDeploying,
+            isError = state.host.isBlank() || hostHasPort(state.host),
+            keyboardType = KeyboardType.Uri,
+            modifier = Modifier.weight(1f),
+        )
+        DeployTextField(
+            value = state.sshPort,
+            onValueChange = { onAction(DeployAction.SshPortChanged(it)) },
+            label = "Порт SSH",
+            placeholder = "22",
+            enabled = !state.isDeploying,
+            isError = !isValidPort(state.sshPort),
+            keyboardType = KeyboardType.Number,
+            modifier = Modifier.width(104.dp),
+        )
+    }
+}
+
 @Composable
 private fun ManualPortFields(
     state: DeployUiState,
@@ -300,16 +318,6 @@ private fun ManualPortFields(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(CsqttSpacing.Sm),
         ) {
-            DeployTextField(
-                value = state.sshPort,
-                onValueChange = { onAction(DeployAction.SshPortChanged(it)) },
-                label = "SSH-порт",
-                placeholder = "22",
-                enabled = !state.isDeploying,
-                isError = state.showValidation && !isValidPort(state.sshPort),
-                keyboardType = KeyboardType.Number,
-                modifier = Modifier.weight(1f),
-            )
             DeployTextField(
                 value = state.peerPort,
                 onValueChange = { onAction(DeployAction.PeerPortChanged(it)) },
