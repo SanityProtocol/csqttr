@@ -60,7 +60,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -134,6 +136,16 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         checkAndRequestNotifications()
+
+        // Subscriptions refresh while the app is open, whichever design is shown (it lived in the V2 screen only)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (isActive) {
+                    SubscriptionSync.refreshDue(appSettingsStore)
+                    delay(30_000L)
+                }
+            }
+        }
 
         setContent {
             val authContext = LocalContext.current.applicationContext

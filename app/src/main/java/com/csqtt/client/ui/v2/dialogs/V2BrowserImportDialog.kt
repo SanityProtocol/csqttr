@@ -1,5 +1,6 @@
 package com.csqtt.client.ui.v2.dialogs
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -18,10 +19,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.csqtt.client.SettingsStore
+import com.csqtt.client.showRaisedToast
 import com.csqtt.client.ui.legacy.utils.parseCsqttLink
 import com.csqtt.client.ui.v2.components.V2Card
 import com.csqtt.client.ui.v2.components.V2DialogContainer
@@ -33,6 +36,7 @@ import com.csqtt.client.ui.v2.design.V2DisplayFamily
 import com.csqtt.client.ui.v2.design.V2Shapes
 import com.csqtt.client.ui.v2.design.V2Spacing
 import com.csqtt.client.ui.v2.design.V2Theme
+import com.csqtt.client.ui.v2.screens.connection.IMPORT_NO_PASSWORD
 import com.csqtt.client.ui.v2.screens.connection.endpoint
 import com.csqtt.client.ui.v2.screens.connection.knownProfileEndpoints
 import com.csqtt.client.ui.v2.screens.connection.saveImportedLink
@@ -49,6 +53,7 @@ fun V2BrowserImportDialog(
 ) {
     val colors = V2Theme.colors
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val link = remember(rawLink) { parseCsqttLink(rawLink) }
 
     var profileName by rememberSaveable(rawLink) {
@@ -78,7 +83,13 @@ fun V2BrowserImportDialog(
         busy = true
         scope.launch {
             val finalName = profileName.trim().ifBlank { link.host }
-            settingsStore.saveImportedLink(slot, rawLink, finalName)
+            // a link without a tunnel password (the parser allows one) saves nothing: say so, stay on this profile
+            if (!settingsStore.saveImportedLink(slot, rawLink, finalName)) {
+                busy = false
+                context.showRaisedToast(IMPORT_NO_PASSWORD, Toast.LENGTH_SHORT)
+                onDismiss()
+                return@launch
+            }
             settingsStore.saveActiveProfile(slot)
             busy = false
             onImported(slot, finalName)

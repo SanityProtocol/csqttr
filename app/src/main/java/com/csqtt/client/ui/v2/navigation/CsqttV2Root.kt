@@ -28,16 +28,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.repeatOnLifecycle
 import com.csqtt.client.AppReleaseInfo
 import com.csqtt.client.BuildConfig
 import com.csqtt.client.CsqttConstants
 import com.csqtt.client.DEFAULT_UPDATE_CHECK_INTERVAL_HOURS
 import com.csqtt.client.SettingsStore
-import com.csqtt.client.SubscriptionSync
 import com.csqtt.client.TunnelManager
 import com.csqtt.client.UPDATE_CHECK_NEVER
 import com.csqtt.client.UPDATE_DIALOG_ACTION_POSTPONED
@@ -89,7 +85,6 @@ fun CsqttV2Root(
     ) {
         val colors = V2Theme.colors
         val context = LocalContext.current.applicationContext
-        val lifecycleOwner = LocalLifecycleOwner.current
         val scope = rememberCoroutineScope()
         val participantMode by settingsStore.csqttLinkMode.collectAsStateWithLifecycle(initialValue = false)
         val participantShowLogs by settingsStore.participantShowLogs.collectAsStateWithLifecycle(
@@ -121,15 +116,6 @@ fun CsqttV2Root(
         LaunchedEffect(selectedTab) {
             selectedTabName = selectedTab.name
             if (selectedTab == V2Tab.Logs) TunnelManager.clearUnreadErrors()
-        }
-
-        LaunchedEffect(lifecycleOwner) {
-            lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                while (isActive) {
-                    SubscriptionSync.refreshDue(settingsStore)
-                    delay(30_000L)
-                }
-            }
         }
 
         LaunchedEffect(Unit) {

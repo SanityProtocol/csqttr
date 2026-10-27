@@ -528,7 +528,10 @@ fun V2ConnectionScreen(
                     context.showRaisedToast("Нет свободных профилей", Toast.LENGTH_SHORT)
                     return@launch
                 }
-                settingsStore.saveImportedLink(slot, text)
+                if (!settingsStore.saveImportedLink(slot, text)) {
+                    context.showRaisedToast(IMPORT_NO_PASSWORD, Toast.LENGTH_SHORT)
+                    return@launch
+                }
                 context.showRaisedToast(
                     "Добавлен профиль: ${parsed.host}",
                     Toast.LENGTH_SHORT,
@@ -587,7 +590,10 @@ fun V2ConnectionScreen(
                             context.showRaisedToast("Нет свободных профилей", Toast.LENGTH_SHORT)
                             return@launch
                         }
-                        settingsStore.saveImportedLink(slot, text)
+                        if (!settingsStore.saveImportedLink(slot, text)) {
+                            context.showRaisedToast(IMPORT_NO_PASSWORD, Toast.LENGTH_SHORT)
+                            return@launch
+                        }
                         context.showRaisedToast(
                             "Добавлен профиль из QR: ${parsed.host}",
                             Toast.LENGTH_SHORT,

@@ -447,16 +447,21 @@ private val DEPLOY_LAST_INSPECTION_PANEL = booleanPreferencesKey("deploy_last_in
         val profile = prefs[ACTIVE_PROFILE] ?: 0
         prefs[getProfileKey(SECONDARY_VK_HASH, profile)] ?: ""
     }
-    val workersPerHash: Flow<Int> = dataStore.data.map { prefs ->
+    /** The most workers the active profile may use: «Экстра потоки» lifts 70 to 100, a subscription can lower it. */
+    private fun workersMaximum(prefs: Preferences): Int {
         val profile = prefs[ACTIVE_PROFILE] ?: 0
         val isExtra = prefs[getProfileKey(EXTRA_WORKERS, profile)] ?: false
         val defaultMax = WorkerCountPolicy.defaultMaximum(isExtra)
-        val max = prefs[getProfileKey(SUBSCRIPTION_POWER, profile)]
+        return prefs[getProfileKey(SUBSCRIPTION_POWER, profile)]
             ?.takeIf { it in 10..100 }
             ?.coerceAtMost(defaultMax)
             ?: defaultMax
+    }
+    val workersMaximum: Flow<Int> = dataStore.data.map { prefs -> workersMaximum(prefs) }
+    val workersPerHash: Flow<Int> = dataStore.data.map { prefs ->
+        val profile = prefs[ACTIVE_PROFILE] ?: 0
         val current = prefs[getProfileKey(WORKERS_PER_HASH, profile)] ?: 18
-        WorkerCountPolicy.normalize(current, maximum = max)
+        WorkerCountPolicy.normalize(current, maximum = workersMaximum(prefs))
     }
     val protocol: Flow<String> = dataStore.data.map { prefs ->
         val profile = prefs[ACTIVE_PROFILE] ?: 0
@@ -874,9 +879,10 @@ private val DEPLOY_LAST_INSPECTION_PANEL = booleanPreferencesKey("deploy_last_in
      * VK hashes or token, worker limit and name. Participant mode is disabled and the raw link
      * plus subscription metadata are removed so the profile connects as a regular owner profile.
      */
-    internal suspend fun saveImportedConnection(profile: Int, imported: ImportedConnectionSettings) {
+    /** False, and nothing written, without a host, a valid port or a tunnel password. */
+    internal suspend fun saveImportedConnection(profile: Int, imported: ImportedConnectionSettings): Boolean {
         val host = imported.host.trim().removePrefix("[").removeSuffix("]")
-        if (host.isEmpty() || imported.port !in 1..65535 || imported.password.isBlank()) return
+        if (host.isEmpty() || imported.port !in 1..65535 || imported.password.isBlank()) return false
         dataStore.edit { prefs ->
             prefs[getProfileKey(PEER, profile)] =
                 if (host.contains(':')) "[$host]:${imported.port}" else host
@@ -925,6 +931,7 @@ private val DEPLOY_LAST_INSPECTION_PANEL = booleanPreferencesKey("deploy_last_in
                 prefs[getProfileKey(PROFILE_NAME, profile)] = name
             }
         }
+        return true
     }
 
     suspend fun saveProfileWorkersPerHash(profile: Int, workersPerHash: Int) {

@@ -115,6 +115,8 @@ internal suspend fun SettingsStore.knownProfileEndpoints(): Map<ProfileEndpoint,
     return owners
 }
 
+internal const val IMPORT_NO_PASSWORD = "В ссылке нет пароля туннеля — профиль не добавлен"
+
 /**
  * Parses any csqtt:// link (plain or encrypted) into separate peer/port, password,
  * VK credentials and worker limit before saving it as a regular owner profile.
@@ -123,9 +125,9 @@ internal suspend fun SettingsStore.saveImportedLink(
     profile: Int,
     rawLink: String,
     customName: String? = null,
-) {
-    val parsed = parseCsqttLink(rawLink) ?: return
-    saveImportedConnection(
+): Boolean {
+    val parsed = parseCsqttLink(rawLink) ?: return false
+    return saveImportedConnection(
         profile = profile,
         imported = ImportedConnectionSettings(
             host = parsed.host,

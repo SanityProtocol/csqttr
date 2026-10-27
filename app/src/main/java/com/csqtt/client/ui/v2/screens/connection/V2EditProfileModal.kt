@@ -42,6 +42,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.csqtt.client.WorkerCountPolicy
 import com.csqtt.client.CsqttConstants
 import com.csqtt.client.SettingsStore
 import com.csqtt.client.TunnelManager
@@ -93,6 +94,7 @@ fun V2EditProfileModal(
     var participantMode by rememberSaveable(profile) { mutableStateOf(false) }
     var subscriptionTitle by rememberSaveable(profile) { mutableStateOf("") }
     var subscriptionPower by rememberSaveable(profile) { mutableIntStateOf(0) }
+    var profileExtraWorkers by rememberSaveable(profile) { mutableStateOf(false) }
 
     var peerError by remember { mutableStateOf(false) }
     var portError by remember { mutableStateOf(false) }
@@ -105,7 +107,10 @@ fun V2EditProfileModal(
     val serverWorkers by TunnelManager.serverAssignedWorkers.collectAsStateWithLifecycle()
     val workersLocked = tunnelRunning && profile == activeProfile
     val fixedWorkers = serverWorkers.takeIf { workersLocked && it in 3..100 }
-    val workersCap = subscriptionPower.takeIf { it in 10..100 } ?: CsqttConstants.Tunnel.MAX_WORKERS
+    // 70, or 100 with «Экстра потоки» (the store reads anything above it back as 70); a subscription can lower it
+    val workersCap = WorkerCountPolicy.defaultMaximum(profileExtraWorkers).let { max ->
+        subscriptionPower.takeIf { it in 10..100 }?.coerceAtMost(max) ?: max
+    }
 
     fun deleteProfile() {
         scope.launch {
@@ -117,8 +122,10 @@ fun V2EditProfileModal(
 
     LaunchedEffect(profile) {
         val snapshot = settingsStore.readProfileConnectionSettings(profile)
-        val cap = snapshot.subscriptionPower.takeIf { it in 10..100 }
-            ?: CsqttConstants.Tunnel.MAX_WORKERS
+        val maxForProfile = WorkerCountPolicy.defaultMaximum(snapshot.extraWorkers)
+        val cap = snapshot.subscriptionPower.takeIf { it in 10..100 }?.coerceAtMost(maxForProfile)
+            ?: maxForProfile
+        profileExtraWorkers = snapshot.extraWorkers
         subscriptionTitle = snapshot.subscriptionTitle
         subscriptionPower = snapshot.subscriptionPower
         peerInput = snapshot.peer
