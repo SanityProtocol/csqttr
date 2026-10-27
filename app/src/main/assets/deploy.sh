@@ -5,7 +5,7 @@ set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
 export TERM="${TERM:-xterm}"
 
-readonly SCRIPT_VERSION="2.5.2"
+readonly SCRIPT_VERSION="2.5.3"
 
 # Which server this run installs (the app picks it after `inventory`). main = the standard place: the stock layout (csqtt1,
 # /etc/csqtt, csqtt.service) — install, update, or replace what runs there. side = a second, independent server (csqtt25)

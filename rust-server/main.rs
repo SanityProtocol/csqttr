@@ -1258,7 +1258,7 @@ async fn async_main() -> Result<()> {
         });
     }
 
-    log_event(&app, "INFO", "SYSTEM", " CSQTT Server 2.5.2 (SanityProtocol build of amurcanov 2.5.0)");
+    log_event(&app, "INFO", "SYSTEM", " CSQTT Server 2.5.3 (SanityProtocol build of amurcanov 2.5.0)");
     log_event(
         &app,
         "INFO",

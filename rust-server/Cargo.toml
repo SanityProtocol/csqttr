@@ -1,6 +1,6 @@
 [package]
 name = "csqtt"
-version = "2.5.2"
+version = "2.5.3"
 edition = "2024"
 rust-version = "1.97.1"
 license = "Unlicense"
