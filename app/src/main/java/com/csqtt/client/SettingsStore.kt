@@ -181,6 +181,8 @@ class SettingsStore(context: Context) {
         private val INFO_PROJECT_EXPANDED = booleanPreferencesKey("info_project_expanded")
         private val CSQTT_LINK = stringPreferencesKey("csqtt_link")
         private val CSQTT_LINK_MODE = booleanPreferencesKey("csqtt_link_mode")
+        // the owner's link hashes a participant took out of the connection (per profile, comma-separated)
+        private val LINK_HASHES_REMOVED = stringPreferencesKey("link_hashes_removed")
         private val PARTICIPANT_SHOW_LOGS = booleanPreferencesKey("participant_show_logs")
         private val SUBSCRIPTION_URL = stringPreferencesKey("subscription_url")
         private val SUBSCRIPTION_TITLE = stringPreferencesKey("subscription_title")
@@ -1195,6 +1197,22 @@ private val DEPLOY_LAST_INSPECTION_PANEL = booleanPreferencesKey("deploy_last_in
             val meta = decodeSubscriptionMeta(prefs[SUBSCRIPTION_META]).toMutableMap()
             meta[key] = transform(meta[key] ?: SubscriptionMeta(url = key))
             prefs[SUBSCRIPTION_META] = encodeSubscriptionMeta(meta)
+        }
+    }
+
+    val linkHashesRemoved: Flow<Set<String>> = dataStore.data.map { prefs ->
+        val profile = prefs[ACTIVE_PROFILE] ?: 0
+        (prefs[getProfileKey(LINK_HASHES_REMOVED, profile)] ?: "").split(",").filter(String::isNotBlank).toSet()
+    }
+
+    suspend fun saveLinkHashesRemoved(removed: Set<String>) {
+        dataStore.edit { prefs ->
+            val profile = prefs[ACTIVE_PROFILE] ?: 0
+            if (removed.isEmpty()) {
+                prefs.remove(getProfileKey(LINK_HASHES_REMOVED, profile))
+            } else {
+                prefs[getProfileKey(LINK_HASHES_REMOVED, profile)] = removed.joinToString(",")
+            }
         }
     }
 

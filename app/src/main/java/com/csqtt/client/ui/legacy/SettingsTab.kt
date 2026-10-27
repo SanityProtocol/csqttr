@@ -207,6 +207,7 @@ internal fun SettingsTabContent(
     }
     val parsedCsqttLink = remember(linkText) { parseCsqttLink(linkText) }
     val linkHashes = parsedCsqttLink?.hashes.orEmpty()
+    val linkHashesRemoved by settingsStore.linkHashesRemoved.collectAsStateWithLifecycle(initialValue = emptySet())
     val linkVkAccessToken = parsedCsqttLink?.vkAccessToken.orEmpty()
     val serverWorkers by TunnelManager.serverAssignedWorkers.collectAsState()
     val effectiveServerWorkers = serverWorkers.takeIf { tunnelRunning && it in 3..100 }
@@ -445,6 +446,9 @@ internal fun SettingsTabContent(
     val passwordRequiredError = showRequiredFieldErrors && !participantMode && connectionPassword.isBlank()
     if (showHashesDialog) {
         HashesDialog(
+            ownerHashes = if (participantMode) linkHashes else emptyList(),
+            removedOwnerHashes = linkHashesRemoved,
+            onRemovedOwnerHashesChange = { removed -> scope.launch { settingsStore.saveLinkHashesRemoved(removed) } },
             hash1 = vkHash1,
             hash2 = vkHash2,
             hash3 = vkHash3,
@@ -571,12 +575,23 @@ internal fun SettingsTabContent(
                     }
 
                     if (linkHashes.isNotEmpty()) {
+                        // the owner's hashes (never shown) plus the participant's own, edited in one dialog
+                        val ownerInUse = linkHashes.count { it !in linkHashesRemoved }
                         Text(
-                            text = "VK хеши из ссылки: ${linkHashes.size}",
+                            text = "VK хеши: от владельца — $ownerInUse, свои — $filledHashCount",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(bottom = 8.dp),
                         )
+                        OutlinedButton(
+                            onClick = { showHashesDialog = true },
+                            enabled = !tunnelRunning,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = CsqttShapes.Pill,
+                        ) {
+                            Text("Ссылки VK звонков", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        }
                     } else {
                         if (linkTokenActive) {
                             Text(

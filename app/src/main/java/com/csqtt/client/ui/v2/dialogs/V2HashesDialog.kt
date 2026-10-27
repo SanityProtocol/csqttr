@@ -41,6 +41,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -74,6 +76,11 @@ fun V2HashesDialog(
     onAutoSave: ((String, String, String, String, String, String) -> Unit)? = null,
     onSave: (String, String, String, String, String, String) -> Unit,
     onDismiss: () -> Unit,
+    // A participant's link hashes: used first, never shown (they are the owner's), each can be checked, taken out or
+    // replaced by one of the participant's own (taken out, then the first free field below takes the new one)
+    ownerHashes: List<String> = emptyList(),
+    removedOwnerHashes: Set<String> = emptySet(),
+    onRemovedOwnerHashesChange: (Set<String>) -> Unit = {},
 ) {
     val colors = V2Theme.colors
     val context = LocalContext.current
@@ -86,6 +93,8 @@ fun V2HashesDialog(
     var h5 by rememberSaveable { mutableStateOf(hash5) }
     var h6 by rememberSaveable { mutableStateOf(hash6) }
     var results by remember(validationResults) { mutableStateOf(validationResults) }
+    var removedOwner by remember(removedOwnerHashes) { mutableStateOf(removedOwnerHashes) }
+    val fieldFocus = remember { List(6) { FocusRequester() } }
     var isChecking by remember { mutableStateOf(false) }
     var unavailableCount by remember { mutableIntStateOf(0) }
 
@@ -118,7 +127,9 @@ fun V2HashesDialog(
         onAutoSave?.invoke(cur1, cur2, cur3, cur4, cur5, cur6)
     }
 
-    val activeHashes = hashes.map(String::trim).filter { it.length >= 16 }.distinct()
+    // the check covers the owner's hashes still in use too (their status shows, never the hash)
+    val activeHashes = (ownerHashes.filterNot { it in removedOwner } + hashes.map(String::trim))
+        .filter { it.length >= 16 }.distinct()
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -206,8 +217,93 @@ fun V2HashesDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                if (ownerHashes.isNotEmpty()) {
+                    ownerHashes.forEachIndexed { idx, ownerHash ->
+                        val removed = ownerHash in removedOwner
+                        val status = results[ownerHash]
+                        fun setRemoved(value: Boolean) {
+                            removedOwner = if (value) removedOwner + ownerHash else removedOwner - ownerHash
+                            onRemovedOwnerHashesChange(removedOwner)
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "От владельца ${idx + 1}",
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontFamily = V2BodyFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                    ),
+                                    color = if (removed) colors.textMuted else colors.textPrimary,
+                                )
+                                Text(
+                                    text = when {
+                                        removed -> "Убран"
+                                        status == VkHashValidationStatus.Valid -> "Активен"
+                                        status == VkHashValidationStatus.Invalid -> "Недействителен"
+                                        else -> "Не проверен"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = V2BodyFamily, fontSize = 11.sp),
+                                    color = when {
+                                        removed -> colors.textMuted
+                                        status == VkHashValidationStatus.Valid -> Color(0xFF66BB6A)
+                                        status == VkHashValidationStatus.Invalid -> colors.error
+                                        else -> colors.textSecondary
+                                    },
+                                )
+                            }
+                            if (removed) {
+                                V2PillButton(
+                                    text = "Вернуть",
+                                    onClick = { setRemoved(false) },
+                                    style = V2PillStyle.Outline,
+                                    enabled = !isChecking,
+                                    height = 40.dp,
+                                )
+                            } else {
+                                V2PillButton(
+                                    text = "Заменить",
+                                    onClick = {
+                                        setRemoved(true)
+                                        hashes.indexOfFirst { it.isBlank() }.takeIf { it >= 0 }
+                                            ?.let { free -> runCatching { fieldFocus[free].requestFocus() } }
+                                    },
+                                    style = V2PillStyle.Outline,
+                                    enabled = !isChecking,
+                                    height = 40.dp,
+                                )
+                                V2SquareIconButton(
+                                    icon = Icons.Default.Delete,
+                                    contentDescription = "Убрать хеш владельца ${idx + 1}",
+                                    onClick = { setRemoved(true) },
+                                    size = 40.dp,
+                                    iconSize = 18.dp,
+                                    shape = V2Shapes.Field,
+                                    backgroundColor = colors.field,
+                                    contentColor = colors.error,
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = "Свои хеши",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = V2BodyFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                        ),
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+
                 hashes.forEachIndexed { idx, value ->
-                    val label = if (idx == 0) "VK Хеш 1 (основной) *" else "VK Хеш ${idx + 1}"
+                    // with the owner's hashes the participant's own are optional
+                    val label = if (idx == 0 && ownerHashes.isEmpty()) "VK Хеш 1 (основной) *" else "VK Хеш ${idx + 1}"
                     val isShort = value.isNotBlank() && value.length < 16
                     val status = results[value]
                     val isValid = status == VkHashValidationStatus.Valid
@@ -287,7 +383,7 @@ fun V2HashesDialog(
                                 placeholder = "Вставьте ссылку или хеш",
                                 isError = isShort || isInvalid,
                                 enabled = !isChecking,
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).focusRequester(fieldFocus[idx]),
                             )
 
                             V2SquareIconButton(

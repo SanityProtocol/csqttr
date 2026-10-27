@@ -215,6 +215,7 @@ fun V2SettingsScreen(
         com.csqtt.client.ui.legacy.utils.parseCsqttLink(tunnelAuthSettings.csqttLink)
     }
     val linkHashes = parsedCsqttLink?.hashes.orEmpty()
+    val linkHashesRemoved by settingsStore.linkHashesRemoved.collectAsStateWithLifecycle(initialValue = emptySet())
     val linkVkAccessToken = parsedCsqttLink?.vkAccessToken.orEmpty()
     val linkTokenActive = participantMode && linkVkAccessToken.isNotEmpty()
 
@@ -401,7 +402,13 @@ fun V2SettingsScreen(
 
             if (participantMode) {
                 if (linkHashes.isNotEmpty()) {
-                    V2SettingRow(title = "VK хеши получены: ${linkHashes.size}")
+                    // the owner's hashes (never shown) plus the participant's own, edited in one sheet
+                    V2ActionSetting(
+                        title = "VK хеши",
+                        action = "От владельца: ${linkHashes.count { it !in linkHashesRemoved }} · свои: $filledHashCount",
+                        onAction = { showHashesDialog = true },
+                        enabled = !tunnelRunning,
+                    )
                 } else if (linkTokenActive) {
                     V2SettingRow(title = "VK токен активен")
                 }
@@ -882,6 +889,9 @@ fun V2SettingsScreen(
 
     if (showHashesDialog) {
         V2HashesDialog(
+            ownerHashes = if (participantMode) linkHashes else emptyList(),
+            removedOwnerHashes = linkHashesRemoved,
+            onRemovedOwnerHashesChange = { removed -> scope.launch { settingsStore.saveLinkHashesRemoved(removed) } },
             hash1 = vkHash1,
             hash2 = vkHash2,
             hash3 = vkHash3,

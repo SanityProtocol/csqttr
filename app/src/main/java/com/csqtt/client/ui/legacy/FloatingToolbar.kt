@@ -283,23 +283,22 @@ fun FloatingToolbar(
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
                     )
 
-                    if (!csqttLinkMode) {
-                        CompactDropdownSetting(
-                            title = "Профиль конфигурации",
-                            selectedKey = activeProfile.toString(),
-                            options = (CsqttConstants.Profiles.MIN_INDEX..CsqttConstants.Profiles.MAX_INDEX)
-                                .map { profile -> profile.toString() to (profileNames[profile] ?: "Профиль $profile") },
-                            enabled = true,
-                            onSelected = { profile ->
-                                profile.toIntOrNull()?.let(onActiveProfileChange)
-                            },
-                            onItemEdit = { key ->
-                                val p = key.toIntOrNull() ?: 0
-                                editingProfileIndex = p
-                                editingProfileName = profileNames[p] ?: "Профиль $p"
-                            },
-                        )
-                    }
+                    // participants switch profiles too (one per link), as in V2
+                    CompactDropdownSetting(
+                        title = "Профиль конфигурации",
+                        selectedKey = activeProfile.toString(),
+                        options = (CsqttConstants.Profiles.MIN_INDEX..CsqttConstants.Profiles.MAX_INDEX)
+                            .map { profile -> profile.toString() to (profileNames[profile] ?: "Профиль $profile") },
+                        enabled = true,
+                        onSelected = { profile ->
+                            profile.toIntOrNull()?.let(onActiveProfileChange)
+                        },
+                        onItemEdit = { key ->
+                            val p = key.toIntOrNull() ?: 0
+                            editingProfileIndex = p
+                            editingProfileName = profileNames[p] ?: "Профиль $p"
+                        },
+                    )
 
                     CompactDropdownSetting(
                         title = "Отпечаток",
