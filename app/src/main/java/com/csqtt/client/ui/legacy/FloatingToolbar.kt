@@ -73,6 +73,9 @@ fun FloatingToolbar(
     val turnSubnetIpLimit by settingsStore.turnSubnetIpLimit.collectAsStateWithLifecycle(
         initialValue = "ALL",
     )
+    val uiDesign by settingsStore.uiDesign.collectAsStateWithLifecycle(
+        initialValue = CsqttConstants.Theme.DESIGN_CLASSIC,
+    )
     var isExpanded by rememberSaveable { mutableStateOf(false) }
     var showQrScanner by rememberSaveable { mutableStateOf(false) }
     var showSupportDeveloperDialog by rememberSaveable { mutableStateOf(false) }
@@ -314,6 +317,17 @@ fun FloatingToolbar(
                         ),
                         enabled = true,
                         onSelected = onThemeChange,
+                    )
+
+                    CompactDropdownSetting(
+                        title = "Дизайн",
+                        selectedKey = uiDesign,
+                        options = listOf(
+                            CsqttConstants.Theme.DESIGN_CLASSIC to "Классический",
+                            CsqttConstants.Theme.DESIGN_V2 to "Новый",
+                        ),
+                        enabled = true,
+                        onSelected = { design -> scope.launch { settingsStore.saveUiDesign(design) } },
                     )
 
                     CsqttSettingRow(

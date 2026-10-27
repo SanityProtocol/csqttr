@@ -806,6 +806,17 @@ fun V2SettingsScreen(
                 },
             )
 
+            V2DropdownSetting(
+                title = "Дизайн",
+                value = "Новый",
+                options = listOf("Классический", "Новый"),
+                onSelected = { label ->
+                    if (label == "Классический") {
+                        scope.launch { settingsStore.saveUiDesign(CsqttConstants.Theme.DESIGN_CLASSIC) }
+                    }
+                },
+            )
+
             V2ActionSetting(
                 title = "Импорт и экспорт",
                 action = "Открыть",

@@ -287,6 +287,7 @@ private val DEPLOY_LAST_INSPECTION_PANEL = booleanPreferencesKey("deploy_last_in
         private val THEME_MODE = stringPreferencesKey("theme_mode") 
         private val IS_DYNAMIC_COLOR = booleanPreferencesKey("is_dynamic_color")
         private val THEME_PALETTE = stringPreferencesKey("theme_palette")
+        private val UI_DESIGN = stringPreferencesKey("ui_design")
 
         private val SELECTED_FINGERPRINT = stringPreferencesKey("selected_fingerprint")
         private val ACTIVE_CLIENT_IDS = stringPreferencesKey("active_client_ids")
@@ -1206,6 +1207,7 @@ private val DEPLOY_LAST_INSPECTION_PANEL = booleanPreferencesKey("deploy_last_in
     val themeMode: Flow<String> = dataStore.data.map { it[THEME_MODE] ?: "system" }
     val isDynamicColor: Flow<Boolean> = dataStore.data.map { it[IS_DYNAMIC_COLOR] ?: false }
     val themePalette: Flow<String> = dataStore.data.map { it[THEME_PALETTE] ?: "indigo" }
+    val uiDesign: Flow<String> = dataStore.data.map { it[UI_DESIGN] ?: CsqttConstants.Theme.DESIGN_CLASSIC }
 
     val selectedFingerprint: Flow<String> = dataStore.data.map { prefs ->
         val profile = prefs[ACTIVE_PROFILE] ?: 0
@@ -1295,6 +1297,12 @@ private val DEPLOY_LAST_INSPECTION_PANEL = booleanPreferencesKey("deploy_last_in
     suspend fun saveThemeMode(mode: String) {
         dataStore.edit { prefs ->
             prefs[THEME_MODE] = mode
+        }
+    }
+
+    suspend fun saveUiDesign(design: String) {
+        dataStore.edit { prefs ->
+            prefs[UI_DESIGN] = design
         }
     }
 

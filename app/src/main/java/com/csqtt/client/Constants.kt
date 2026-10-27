@@ -174,6 +174,10 @@ object CsqttConstants {
         const val PALETTE_INDIGO = "indigo"
         const val PALETTE_ESPRESSO = "espresso"
         const val PALETTE_FOREST = "forest"
+
+        /** The app's look: the classic interface (default) or the V2 redesign. */
+        const val DESIGN_CLASSIC = "classic"
+        const val DESIGN_V2 = "v2"
     }
 
     object Links {

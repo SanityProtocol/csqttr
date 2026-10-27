@@ -64,7 +64,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
-import com.csqtt.client.ui.v2.dialogs.V2AppUpdateDialog as AppUpdateDialog
+import com.csqtt.client.ui.legacy.AppUpdateDialog
 import com.csqtt.client.ui.legacy.ConnectionTab
 import com.csqtt.client.ui.legacy.ExceptionsTab
 import com.csqtt.client.ui.legacy.FloatingToolbar
@@ -76,9 +76,9 @@ import com.csqtt.client.ui.legacy.InfoTab
 import com.csqtt.client.ui.legacy.components.LocalCsqttHeaderActions
 import com.csqtt.client.ui.legacy.design.CsqttMotion
 import com.csqtt.client.ui.legacy.design.CsqttShapes
-import com.csqtt.client.ui.v2.dialogs.V2VkAuthDialog as VkAuthDialog
+import com.csqtt.client.ui.legacy.dialogs.VkAuthDialog
+import com.csqtt.client.ui.v2.dialogs.V2VkAuthDialog
 import com.csqtt.client.ui.legacy.utils.parseCsqttLink
-import com.csqtt.client.ui.v2.CsqttV2Config
 import com.csqtt.client.ui.v2.navigation.CsqttV2Root
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -135,16 +135,20 @@ class MainActivity : ComponentActivity() {
 
         checkAndRequestNotifications()
 
-        com.csqtt.client.ui.v2.screens.settings.preloadAvatars(this)
-
         setContent {
             val authContext = LocalContext.current.applicationContext
             val authScope = rememberCoroutineScope()
             val uiStateHolder = rememberSaveableStateHolder()
+            // The look the user chose in settings: classic (the default) or the V2 redesign; null until it is read.
+            val design by appSettingsStore.uiDesign.collectAsStateWithLifecycle<String?>(initialValue = null)
+            val v2Design = design == CsqttConstants.Theme.DESIGN_V2
             if (renderUi) {
-                uiStateHolder.SaveableStateProvider("main_ui") {
+                uiStateHolder.SaveableStateProvider(if (v2Design) "main_ui_v2" else "main_ui") {
             val settingsStore = remember { appSettingsStore }
-            if (CsqttV2Config.ENABLED) {
+            if (design == null) {
+                // a few frames at start: drawing nothing beats flashing the other design
+            } else if (v2Design) {
+                LaunchedEffect(Unit) { com.csqtt.client.ui.v2.screens.settings.preloadAvatars(authContext) }
                 CsqttV2Root(
                     settingsStore = settingsStore,
                     onVkAuthRequested = { showVkAuthDialog = true },
@@ -184,19 +188,26 @@ class MainActivity : ComponentActivity() {
                 }
             }
             if (showVkAuthDialog) {
-                VkAuthDialog(
-                    onToken = { payload ->
-                        showVkAuthDialog = false
-                        authScope.launch {
-                            appSettingsStore.saveVkAccessToken(payload.token, payload.userId)
-                            authContext.showRaisedToast("Вечный VK access token сохранен", Toast.LENGTH_SHORT)
-                        }
-                    },
-                    onDismiss = { showVkAuthDialog = false },
-                )
+                val onToken: (VkAuthPayload) -> Unit = { payload ->
+                    showVkAuthDialog = false
+                    authScope.launch {
+                        appSettingsStore.saveVkAccessToken(payload.token, payload.userId)
+                        authContext.showRaisedToast("Вечный VK access token сохранен", Toast.LENGTH_SHORT)
+                    }
+                }
+                if (v2Design) {
+                    V2VkAuthDialog(onToken = onToken, onDismiss = { showVkAuthDialog = false })
+                } else {
+                    VkAuthDialog(onToken = onToken, onDismiss = { showVkAuthDialog = false })
+                }
             }
             val pendingLink = pendingDeepLink
-            if (pendingLink != null) {
+            if (pendingLink != null && design != null && !v2Design) {
+                LaunchedEffect(pendingLink) {
+                    pendingDeepLink = null
+                    showClassicImportDialog(pendingLink)
+                }
+            } else if (pendingLink != null && v2Design) {
                 com.csqtt.client.ui.v2.dialogs.V2BrowserImportDialog(
                     rawLink = pendingLink,
                     settingsStore = remember { appSettingsStore },
@@ -225,6 +236,22 @@ class MainActivity : ComponentActivity() {
             return
         }
         pendingDeepLink = raw
+    }
+
+    /** The classic design's import of a csqtt:// link: it replaces the current configuration, after a confirmation. */
+    private fun showClassicImportDialog(raw: String) {
+        val link = parseCsqttLink(raw) ?: return
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Импорт конфигурации CSQTT")
+            .setMessage("Хост: ${link.host}\nPeer: ${link.port}\n\nЗаменить текущую конфигурацию?")
+            .setPositiveButton("Импортировать") { _, _ ->
+                lifecycleScope.launch {
+                    appSettingsStore.saveCsqttParticipantLink(raw)
+                    showRaisedToast("Конфигурация CSQTT успешно подключена", Toast.LENGTH_SHORT)
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
     }
 
     private fun checkAndRequestNotifications() {
