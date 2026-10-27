@@ -432,7 +432,7 @@ fun MainScreen(
     }
 
     LaunchedEffect(updateCheckIntervalHours) {
-        if (updateCheckIntervalHours == UPDATE_CHECK_NEVER) return@LaunchedEffect
+        if (CsqttConstants.Update.CHECK_DISABLED || updateCheckIntervalHours == UPDATE_CHECK_NEVER) return@LaunchedEffect
 
         val intervalMillis = updateIntervalHoursToMillis(updateCheckIntervalHours)
             ?: updateIntervalHoursToMillis(DEFAULT_UPDATE_CHECK_INTERVAL_HOURS)

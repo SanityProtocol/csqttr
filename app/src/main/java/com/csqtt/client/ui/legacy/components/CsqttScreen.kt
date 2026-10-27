@@ -73,11 +73,26 @@ fun CsqttScreen(
                         tint = Color.Unspecified,
                         modifier = Modifier.height(22.dp)
                     )
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_v250_by_amurcanov),
-                        contentDescription = "v2.5.0 by amurcanov",
-                        tint = Color.Unspecified,
-                        modifier = Modifier.height(13.dp)
+                    // SanityProtocol build: the version (from the build, in the drawn subtitle's gradient) reads first;
+                    // the build's own name is a small, quiet line under it
+                    Text(
+                        text = "v${com.csqtt.client.BuildConfig.VERSION_NAME} by amurcanov",
+                        style = androidx.compose.ui.text.TextStyle(
+                            brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
+                                listOf(Color(0xFF45B7FF), Color(0xFF2087FF), Color(0xFF075BFF))
+                            ),
+                        ),
+                        fontSize = 14.sp,
+                        lineHeight = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = "сборка SanityProtocol",
+                        fontSize = 9.sp,
+                        lineHeight = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
                     )
                 }
 

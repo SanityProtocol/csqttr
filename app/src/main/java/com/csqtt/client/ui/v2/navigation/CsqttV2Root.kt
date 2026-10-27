@@ -120,7 +120,7 @@ fun CsqttV2Root(
 
         LaunchedEffect(Unit) {
             val intervalHours = settingsStore.updateCheckIntervalHours.first()
-            if (intervalHours == UPDATE_CHECK_NEVER) return@LaunchedEffect
+            if (CsqttConstants.Update.CHECK_DISABLED || intervalHours == UPDATE_CHECK_NEVER) return@LaunchedEffect
 
             val intervalMillis = updateIntervalHoursToMillis(intervalHours)
                 ?: updateIntervalHoursToMillis(DEFAULT_UPDATE_CHECK_INTERVAL_HOURS)

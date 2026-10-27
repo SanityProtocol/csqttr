@@ -99,6 +99,11 @@ object CsqttConstants {
             "https://api.github.com/repos/Afteroid/csqttr/tags?per_page=100"
         const val GITHUB_TAG_TREE_URL_PREFIX =
             "https://github.com/Afteroid/csqttr/tree/"
+        // SanityProtocol build: new versions are published with the swg-panel csqtt releases and handed out by the
+        // panel's subscription page. The check against Afteroid/csqttr is off: that APK is another app (another ID and
+        // signing key) and cannot install over this one.
+        const val SANITY_RELEASES_URL = "https://github.com/SanityProtocol/swg-panel/releases?q=csqtt"
+        val CHECK_DISABLED = true   // not const: the check's code stays reachable (its null checks smart-cast)
     }
 
     object Notifications {
@@ -182,7 +187,7 @@ object CsqttConstants {
 
     object Links {
         const val RELEASES = "https://github.com/Afteroid/csqttr/releases"
-        const val ISSUES = "https://github.com/Afteroid/csqttr/issues/new"
+        const val ISSUES = "https://github.com/SanityProtocol/swg-panel/issues"
         const val DEVELOPER_PROFILE = "https://github.com/amurcanov"
         const val REPOSITORY = "https://github.com/Afteroid/csqttr"
         const val TELEGRAM = "https://t.me/amurcanov_telegram"
