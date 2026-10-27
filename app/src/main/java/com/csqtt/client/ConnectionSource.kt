@@ -28,6 +28,7 @@ suspend fun resolveConnectionSource(store: SettingsStore): ConnectionSource? {
 
     if (store.csqttLinkMode.first()) {
         val link = parseCsqttLink(store.csqttLink.first()) ?: return null
+        TunnelManager.ownerHashes = link.hashes
         val removed = store.linkHashesRemoved.first()
         val tokenFromLink = link.vkAccessToken.isNotEmpty()
         return ConnectionSource(
@@ -42,6 +43,7 @@ suspend fun resolveConnectionSource(store: SettingsStore): ConnectionSource? {
         )
     }
 
+    TunnelManager.ownerHashes = emptyList()
     val basePeer = store.peer.first()
     val passwordState = store.connectionPasswordState.first()
     val password = passwordState.value
