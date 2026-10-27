@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
@@ -425,6 +426,28 @@ fun V2ConnectionScreen(
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(top = V2Spacing.Xs),
             )
+            // «Экономия батареи» in force: said under the status, where the user looks
+            val batterySaving by com.csqtt.client.BatterySaver.active.collectAsStateWithLifecycle()
+            if (batterySaving && tunnelRunning) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(top = V2Spacing.Sm, start = V2Spacing.Lg, end = V2Spacing.Lg),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.BatterySaver,
+                        contentDescription = null,
+                        tint = colors.warning,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        text = com.csqtt.client.BatterySaver.BADGE,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.warning,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
         }
 
             V2ProfileCard(

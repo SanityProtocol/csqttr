@@ -1,5 +1,6 @@
 package com.csqtt.client.ui.v2.dialogs
 
+import com.csqtt.client.BatterySaver
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -368,6 +369,33 @@ fun V2WifiAutoPauseInfoDialog(onDismiss: () -> Unit) {
     ) {
         Text(
             text = "При подключении к любой сети Wi-Fi туннель CSQTT автоматически переводится на паузу, снижая нагрузку и экономя трафик. При переключении обратно на мобильную сеть туннель возобновляет работу.",
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontFamily = V2BodyFamily,
+                lineHeight = 18.sp,
+            ),
+            color = colors.textSecondary,
+        )
+    }
+}
+
+@Composable
+fun V2BatterySaverInfoDialog(onDismiss: () -> Unit) {
+    val colors = V2Theme.colors
+    V2DialogContainer(
+        title = BatterySaver.TITLE,
+        onDismiss = onDismiss,
+        actions = {
+            V2PillButton(
+                text = "Понятно",
+                onClick = onDismiss,
+                style = V2PillStyle.Contrast,
+                modifier = Modifier.fillMaxWidth(),
+                height = 50.dp,
+            )
+        },
+    ) {
+        Text(
+            text = BatterySaver.DESCRIPTION,
             style = MaterialTheme.typography.bodySmall.copy(
                 fontFamily = V2BodyFamily,
                 lineHeight = 18.sp,

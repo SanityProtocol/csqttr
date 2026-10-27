@@ -55,7 +55,8 @@ class TunVpnService : VpnService() {
     // LOW_LATENCY Wi-Fi lock is active only with the screen on, so the deprecated HIGH_PERF mode is kept for the background VPN.
     @Suppress("DEPRECATION")
     private fun acquireLocks() {
-        if (wakeLock?.isHeld != true) {
+        // «Экономия батареи» in force: no CPU wake lock (the Wi-Fi lock stays)
+        if (!BatterySaver.active.value && wakeLock?.isHeld != true) {
             val pm = getSystemService(PowerManager::class.java)
             wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "csqtt:tun_vpn_service")?.apply {
                 setReferenceCounted(false)
@@ -68,6 +69,16 @@ class TunVpnService : VpnService() {
                 setReferenceCounted(false)
                 acquire()
             }
+        }
+    }
+
+    /** «Экономия батареи» came into force (let the CPU sleep) or ended (hold it again while the VPN runs). */
+    fun onBatterySaverChanged(save: Boolean) {
+        if (save) {
+            runCatching { if (wakeLock?.isHeld == true) wakeLock?.release() }
+            wakeLock = null
+        } else if (!stopRequested && !serviceDestroyed) {
+            acquireLocks()
         }
     }
 

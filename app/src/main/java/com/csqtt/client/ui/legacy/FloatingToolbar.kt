@@ -39,6 +39,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalContext
+import com.csqtt.client.BatterySaver
 import com.csqtt.client.ui.legacy.dialogs.ImportExportDialog
 import com.csqtt.client.ui.legacy.dialogs.QrScannerDialog
 import com.csqtt.client.ui.legacy.dialogs.SupportDeveloperDialog
@@ -81,6 +82,11 @@ fun FloatingToolbar(
     var showSupportDeveloperDialog by rememberSaveable { mutableStateOf(false) }
     var showImportExportDialog by rememberSaveable { mutableStateOf(false) }
     var showAutoPauseInfo by rememberSaveable { mutableStateOf(false) }
+    var showBatterySaverInfo by rememberSaveable { mutableStateOf(false) }
+    val batterySaverEnabled by settingsStore.batterySaverEnabled.collectAsStateWithLifecycle(initialValue = false)
+    val batterySaverPercent by settingsStore.batterySaverPercent.collectAsStateWithLifecycle(
+        initialValue = BatterySaver.DEFAULT_PERCENT,
+    )
     var showTurnSubnetsDialog by rememberSaveable { mutableStateOf(false) }
     val profileNames by settingsStore.profileNames.collectAsStateWithLifecycle(
         initialValue = emptyMap(),
@@ -338,6 +344,27 @@ fun FloatingToolbar(
                         infoContentDescription = "Как работает автопауза при Wi-Fi",
                     )
 
+                    CsqttSettingRow(
+                        title = BatterySaver.TITLE,
+                        checked = batterySaverEnabled,
+                        onCheckedChange = { checked -> scope.launch { settingsStore.saveBatterySaver(checked) } },
+                        onInfoClick = { showBatterySaverInfo = true },
+                        infoContentDescription = "Как работает экономия батареи",
+                    )
+
+                    if (batterySaverEnabled) {
+                        CompactDropdownSetting(
+                            title = "Включать при заряде",
+                            selectedKey = batterySaverPercent.toString(),
+                            options = (BatterySaver.PERCENT_CHOICES + batterySaverPercent).distinct().sorted()
+                                .map { percent -> percent.toString() to "≤ $percent %" },
+                            enabled = true,
+                            onSelected = { key ->
+                                key.toIntOrNull()?.let { percent -> scope.launch { settingsStore.saveBatterySaverPercent(percent) } }
+                            },
+                        )
+                    }
+
                     if (csqttLinkMode) {
                         CsqttSettingRow(
                             title = "Показывать логи",
@@ -378,6 +405,10 @@ fun FloatingToolbar(
                 }
             }
         }
+    }
+
+    if (showBatterySaverInfo) {
+        BatterySaverInfoDialog(onDismiss = { showBatterySaverInfo = false })
     }
 
     if (showAutoPauseInfo) {

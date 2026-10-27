@@ -171,6 +171,11 @@ fun V2SettingsScreen(
     var showTurnTransportGeneralDialog by rememberSaveable { mutableStateOf(false) }
     var showTurnTransportDetailDialog by rememberSaveable { mutableStateOf<String?>(null) }
     var showAutoPauseInfoDialog by rememberSaveable { mutableStateOf(false) }
+    var showBatterySaverInfoDialog by rememberSaveable { mutableStateOf(false) }
+    val batterySaverEnabled by settingsStore.batterySaverEnabled.collectAsStateWithLifecycle(initialValue = false)
+    val batterySaverPercent by settingsStore.batterySaverPercent.collectAsStateWithLifecycle(
+        initialValue = com.csqtt.client.BatterySaver.DEFAULT_PERCENT,
+    )
     var showExtraWorkersInfoDialog by rememberSaveable { mutableStateOf(false) }
     var showTurnSubnetsDialog by rememberSaveable { mutableStateOf(false) }
     var showAutoJsRiskDialog by remember { mutableStateOf(false) }
@@ -777,6 +782,29 @@ fun V2SettingsScreen(
                 onInfoClick = { showAutoPauseInfoDialog = true },
             )
 
+            V2SwitchSetting(
+                title = com.csqtt.client.BatterySaver.TITLE,
+                checked = batterySaverEnabled,
+                onCheckedChange = { checked ->
+                    scope.launch { settingsStore.saveBatterySaver(checked) }
+                },
+                onInfoClick = { showBatterySaverInfoDialog = true },
+            )
+
+            if (batterySaverEnabled) {
+                val choices = (com.csqtt.client.BatterySaver.PERCENT_CHOICES + batterySaverPercent).distinct().sorted()
+                V2DropdownSetting(
+                    title = "Включать при заряде",
+                    value = "≤ $batterySaverPercent %",
+                    options = choices.map { "≤ $it %" },
+                    onSelected = { label ->
+                        choices.firstOrNull { "≤ $it %" == label }?.let { percent ->
+                            scope.launch { settingsStore.saveBatterySaverPercent(percent) }
+                        }
+                    },
+                )
+            }
+
             V2SettingsSection("Приложение")
 
             V2SwitchSetting(
@@ -936,6 +964,10 @@ fun V2SettingsScreen(
     showWorkModeDetailDialog?.let { mode ->
         V2WorkModeInfoDialog(mode = mode, onDismiss = { showWorkModeDetailDialog = null })
     }
+    if (showBatterySaverInfoDialog) {
+        com.csqtt.client.ui.v2.dialogs.V2BatterySaverInfoDialog(onDismiss = { showBatterySaverInfoDialog = false })
+    }
+
     if (showAutoPauseInfoDialog) {
         V2WifiAutoPauseInfoDialog(onDismiss = { showAutoPauseInfoDialog = false })
     }
