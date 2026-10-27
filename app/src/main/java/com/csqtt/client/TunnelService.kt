@@ -1294,7 +1294,10 @@ class TunnelService : Service() {
 
     private fun acquireWakeLock() {
         // «Экономия батареи» in force: the CPU may sleep, the tunnel with it — except for a deploy, which needs it awake
-        if (BatterySaver.active.value && !DeployManager.isDeploying.value) return
+        if (BatterySaver.active.value && !DeployManager.isDeploying.value) {
+            releaseWakeLock() // one a deploy or a server check took meanwhile
+            return
+        }
         val now = SystemClock.elapsedRealtime()
         if (wakeLock?.isHeld == true && now < wakeLockExpiresAtElapsedMs - WAKE_LOCK_RENEWAL_WINDOW_MS) return
         if (wakeLock?.isHeld == true) wakeLock?.release()

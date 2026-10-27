@@ -873,9 +873,12 @@ fun V2DeployScreen(
                     instance = server.deployInstance(),
                 )
                 if (success) {
-                    settingsStore.saveServerConfigured(false)
-                    settingsStore.clearDeployInspection()
-                    ServerMaintenanceState.inspectionResult.value = null
+                    // the card shows the standard place; removing the second server (csqtt25) leaves it as it is
+                    if (server.place != ServerPlace.SIDE) {
+                        settingsStore.saveServerConfigured(false)
+                        settingsStore.clearDeployInspection()
+                        ServerMaintenanceState.inspectionResult.value = null
+                    }
                     showDeployToast("CSQTT успешно удален с сервера")
                 } else if (!offerNewHostKey(host, ports.ssh) { startUninstall(server) }) {
                     showDeployToast(DeployManager.lastResult.value.ifBlank { "Ошибка удаления" })
@@ -1478,11 +1481,18 @@ fun V2DeployScreen(
             emptyText = "csqtt не найден — сервер чистый",
             notes = plan.notes,
             choices = plan.actions.mapIndexed { index, action ->
+                // the one action a reinstall wipes (launchDeploy keeps Reinstall only for it): say so, not "settings stay"
+                val wipes = mode == DeployActionMode.Reinstall && action.kind == PlanKind.UPDATE &&
+                    action.instance == DeployInstance.MAIN
                 CheckChoice(
-                    action.title,
-                    action.detail,
+                    if (wipes) "Переустановить начисто" else action.title,
+                    if (wipes) {
+                        "Удаляются CSQTT, база клиентов, конфигурация и сертификаты, затем чистая установка. Клиенты и пароли не сохранятся"
+                    } else {
+                        action.detail
+                    },
                     when {
-                        action.destructive -> CheckChoiceStyle.DESTRUCTIVE
+                        action.destructive || wipes -> CheckChoiceStyle.DESTRUCTIVE
                         index == 0 -> CheckChoiceStyle.RECOMMENDED
                         else -> CheckChoiceStyle.OTHER
                     },

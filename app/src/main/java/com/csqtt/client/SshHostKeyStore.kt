@@ -71,6 +71,8 @@ object SshHostKeyStore {
                 return true
             }
             if (pinned == presented) {
+                // the server presents the pinned key again: an earlier mismatch no longer applies
+                if (lastChange?.let { entryKey(it.host, it.port) } == entry) lastChange = null
                 return true
             }
             lastChange = KeyChange(hostname, port, pinned, presented)

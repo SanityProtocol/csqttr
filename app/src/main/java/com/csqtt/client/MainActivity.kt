@@ -193,6 +193,26 @@ class MainActivity : ComponentActivity() {
                         },
                         onVkAuthRequested = { showVkAuthDialog = true },
                     )
+                    // A csqtt:// link, the classic way: confirm, then it replaces the current configuration. It stays
+                    // pending until the user chooses, so the dialog survives a rotation instead of losing the link.
+                    pendingDeepLink?.let { raw ->
+                        val link = remember(raw) { parseCsqttLink(raw) } ?: return@let
+                        AlertDialog(
+                            onDismissRequest = { pendingDeepLink = null },
+                            title = { Text("Импорт конфигурации CSQTT") },
+                            text = { Text("Хост: ${link.host}\nPeer: ${link.port}\n\nЗаменить текущую конфигурацию?") },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    pendingDeepLink = null
+                                    scope.launch {
+                                        settingsStore.saveCsqttParticipantLink(raw)
+                                        authContext.showRaisedToast("Конфигурация CSQTT успешно подключена", Toast.LENGTH_SHORT)
+                                    }
+                                }) { Text("Импортировать") }
+                            },
+                            dismissButton = { TextButton(onClick = { pendingDeepLink = null }) { Text("Отмена") } },
+                        )
+                    }
                 }
             }
             }
@@ -216,12 +236,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             val pendingLink = pendingDeepLink
-            if (pendingLink != null && design != null && !v2Design) {
-                LaunchedEffect(pendingLink) {
-                    pendingDeepLink = null
-                    showClassicImportDialog(pendingLink)
-                }
-            } else if (pendingLink != null && v2Design) {
+            if (pendingLink != null && v2Design) {
                 com.csqtt.client.ui.v2.dialogs.V2BrowserImportDialog(
                     rawLink = pendingLink,
                     settingsStore = remember { appSettingsStore },
@@ -250,22 +265,6 @@ class MainActivity : ComponentActivity() {
             return
         }
         pendingDeepLink = raw
-    }
-
-    /** The classic design's import of a csqtt:// link: it replaces the current configuration, after a confirmation. */
-    private fun showClassicImportDialog(raw: String) {
-        val link = parseCsqttLink(raw) ?: return
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Импорт конфигурации CSQTT")
-            .setMessage("Хост: ${link.host}\nPeer: ${link.port}\n\nЗаменить текущую конфигурацию?")
-            .setPositiveButton("Импортировать") { _, _ ->
-                lifecycleScope.launch {
-                    appSettingsStore.saveCsqttParticipantLink(raw)
-                    showRaisedToast("Конфигурация CSQTT успешно подключена", Toast.LENGTH_SHORT)
-                }
-            }
-            .setNegativeButton("Отмена", null)
-            .show()
     }
 
     private fun checkAndRequestNotifications() {
