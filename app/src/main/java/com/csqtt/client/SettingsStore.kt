@@ -209,6 +209,7 @@ class SettingsStore(context: Context) {
         private val DEPLOY_IP = stringPreferencesKey("deploy_ip")
         private val DEPLOY_SERVER_NAME = stringPreferencesKey("deploy_server_name")
         private val DEPLOY_PROFILE_NAMES_CLEANED = booleanPreferencesKey("deploy_profile_names_cleaned_v2")
+        private val DEFAULT_ROLE_DECIDED = booleanPreferencesKey("default_role_decided")
         private val DEPLOY_LOGIN = stringPreferencesKey("deploy_login")
         private val DEPLOY_PASSWORD = stringPreferencesKey("deploy_password")
         private val DEPLOY_PASSWORD_ENCRYPTED = stringPreferencesKey("deploy_password_encrypted")
@@ -1249,6 +1250,7 @@ private val DEPLOY_LAST_INSPECTION_PANEL = booleanPreferencesKey("deploy_last_in
     init {
         if (migrationsStarted.compareAndSet(false, true)) {
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                migrateDefaultRole()
                 migrateConnectionPasswordsToLocalStorage()
                 migrateSecretsToKeystore()
                 migrateLegacyWhitelistMode()
@@ -2143,6 +2145,27 @@ private val DEPLOY_LAST_INSPECTION_PANEL = booleanPreferencesKey("deploy_last_in
      * deploy-only profiles show up as named owner profiles. Move that name to its own
      * deploy key and clear the connection profile name for server-only slots.
      */
+    /**
+     * A fresh install starts as «Участник»: most people get a link or a QR code, not a server. Decided once, by what is
+     * stored rather than by what was written first (other startup code writes settings at the same time): an install
+     * that holds a connection, a link, a subscription, hashes, a deployed server or a chosen role keeps its role.
+     */
+    private suspend fun migrateDefaultRole() {
+        dataStore.edit { prefs ->
+            if (prefs[DEFAULT_ROLE_DECIDED] == true) return@edit
+            prefs[DEFAULT_ROLE_DECIDED] = true
+            val configured = (CsqttConstants.Profiles.MIN_INDEX..CsqttConstants.Profiles.MAX_INDEX).any { profile ->
+                listOf(PEER, CSQTT_LINK, SUBSCRIPTION_URL, VK_HASHES, DEPLOY_IP, CONNECTION_PASSWORD,
+                    CONNECTION_PASSWORD_ENCRYPTED, CONNECTION_PASSWORD_LOCAL)
+                    .any { !prefs[getProfileKey(it, profile)].isNullOrBlank() } ||
+                    prefs[getProfileKey(CSQTT_LINK_MODE, profile)] != null
+            }
+            if (!configured) {
+                prefs[getProfileKey(CSQTT_LINK_MODE, prefs[ACTIVE_PROFILE] ?: 0)] = true
+            }
+        }
+    }
+
     private suspend fun migrateDeployServerNames() {
         val current = dataStore.data.first()
         if (current[DEPLOY_PROFILE_NAMES_CLEANED] == true) return
